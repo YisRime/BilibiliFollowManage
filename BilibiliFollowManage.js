@@ -2,12 +2,11 @@
 // @name         B站关注管理（支持导入导出关注列表）
 // @namespace    http://tampermonkey.net/
 // @version      3.1
-// @description  在@苡淞的插件上迭代，高效管理B站关注列表，支持导入导出关注列表、取关、智能筛选、实时粉丝数获取、批量操作等功能；注意，短时间内大量关注可能被风控
+// @description  高效管理B站关注列表，支持导入导出关注列表、取关、智能筛选、实时粉丝数获取、批量操作等功能；注意，短时间内大量关注可能被风控（需要在关注列表页面刷新后使用）
 // @author       苡淞（Yis_Rime）符若_float（float0108）
 // @homepage     https://github.com/YisRime/BilibiliFollowManage
 // @match        https://space.bilibili.com/*/relation/follow*
 // @match        https://space.bilibili.com/*/fans/follow*
-// @match        https://space.bilibili.com/*/relation/follow*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
 // @connect      api.bilibili.com
