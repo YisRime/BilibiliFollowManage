@@ -1,13 +1,12 @@
 // ==UserScript==
 // @name         B站关注管理（支持导入导出关注列表）
 // @namespace    http://tampermonkey.net/
-// @version      3.0
-// @description  在@苡淞的插件上迭代，高效管理B站关注列表，支持导入导出关注列表、取关、智能筛选、实时粉丝数获取、批量操作等功能；注意，短时间内大量关注可能被风控
+// @version      3.1
+// @description  高效管理B站关注列表，支持导入导出关注列表、取关、智能筛选、实时粉丝数获取、批量操作等功能；注意，短时间内大量关注可能被风控（需要在关注列表页面刷新后使用）
 // @author       苡淞（Yis_Rime）符若_float（float0108）
 // @homepage     https://github.com/YisRime/BilibiliFollowManage
 // @match        https://space.bilibili.com/*/relation/follow*
 // @match        https://space.bilibili.com/*/fans/follow*
-// @match        https://space.bilibili.com/*/relation/follow*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
 // @connect      api.bilibili.com
@@ -579,18 +578,21 @@
 			// 取关
 			this.modal.querySelector("#unfollow-btn").onclick = () =>
 				this.unfollowSelected();
-			// 获取粉丝数，刷新列表
+			// 获取粉丝数
 			this.modal.querySelector("#fetch-fans-btn").onclick = () =>
 				this.fetchAllFans();
+			// 刷新列表
 			this.modal.querySelector("#clear-cache-btn").onclick = () =>
 				this.refresh();
-			// 导出导入按钮
+			// 导出按钮
 			this.modal.querySelector("#export-btn").onclick = () =>
 				this.exportFollowList();
+			// 导入按钮
 			this.modal.querySelector("#import-btn").onclick = () =>
-				this.importFromFile();
+				this.importFromFile(false);
 			// 同步按钮
-			this.modal.querySelector("#sync-btn").onclick = () => this.syncFromFile();
+			this.modal.querySelector("#sync-btn").onclick = () =>
+				this.importFromFile(true);
 			// 停止按钮
 			this.modal.querySelector("#stop-btn").onclick = () =>
 				this.stopCurrentOperation();
@@ -740,8 +742,18 @@
 					user.follower !== null && user.follower !== undefined
 						? user.follower.toLocaleString()
 						: '<span style="color:#999;">未获取</span>';
-				const officialTitle = this.getOfficialTitle(user.official_verify);
-				const vipType = this.getVipType(user.vip);
+				const officialTitle = ((officialInfo) => {
+					if (!officialInfo || officialInfo.type < 0) return "";
+					const titles = { 0: "个人", 1: "机构" };
+					const typeTitle = titles[officialInfo.type] || "认证";
+					return officialInfo.desc
+						? `${typeTitle}: ${officialInfo.desc}`
+						: typeTitle;
+				})(user.official_verify);
+				const vipType = ((vipInfo) => {
+					if (!vipInfo || vipInfo.vipType === 0) return "";
+					return vipInfo.label?.text || "大会员";
+				})(user.vip);
 				const row = document.createElement("tr");
 				row.innerHTML = `
                     <td><input type="checkbox" class="row-checkbox" value="${
@@ -910,19 +922,7 @@
 			if (sortHeader) sortHeader.classList.add(`sort-${this.sortOrder}`);
 			this.renderTable();
 		}
-		// 工具函数
-		getOfficialTitle(officialInfo) {
-			if (!officialInfo || officialInfo.type < 0) return "";
-			const titles = { 0: "个人", 1: "机构" };
-			const typeTitle = titles[officialInfo.type] || "认证";
-			return officialInfo.desc
-				? `${typeTitle}: ${officialInfo.desc}`
-				: typeTitle;
-		}
-		getVipType(vipInfo) {
-			if (!vipInfo || vipInfo.vipType === 0) return "";
-			return vipInfo.label?.text || "大会员";
-		}
+
 		// 获取全部粉丝数
 		async fetchAllFans() {
 			if (!confirm("确定要获取所有用户的粉丝数吗？这可能需要一些时间。"))
@@ -1005,656 +1005,295 @@
 				alert("导出失败: " + error.message);
 			}
 		}
-		// 从文件同步关注列表
-		syncFromFile() {
-			const input = document.createElement("input");
-			input.type = "file";
-			input.accept = ".txt";
+		// 从文件中导入（update=true：与文件完全同步，支持取关 update=false：只添加新的关注）
+		async importFromFile(update=false) {
+			try {
+				// 1. 选择并读取文件
+				const content = await new Promise((resolve, reject) => {
+					const input = document.createElement("input");
+					input.type = "file";
+					input.accept = ".txt";
 
-			input.onchange = (e) => {
-				const file = e.target.files[0];
-				if (!file) return;
+					input.onchange = (e) => {
+						const file = e.target.files[0];
+						if (!file) {
+							reject(new Error("未选择文件"));
+							return;
+						}
 
-				const reader = new FileReader();
-				reader.onload = (event) => {
-					try {
-						const content = event.target.result;
-						this.processSyncFile(content);
-					} catch (error) {
-						alert("文件读取失败: " + error.message);
+						const reader = new FileReader();
+						reader.onload = (event) => resolve(event.target.result);
+						reader.onerror = () => reject(new Error("文件读取失败"));
+						reader.readAsText(file);
+					};
+
+					input.click();
+				});
+
+				// 2. 解析文件内容
+				const lines = content.split("\n").filter((line) => line.trim());
+				const fileUsers = new Map();
+
+				for (const line of lines) {
+					const match = line.match(/^(\d+),([^,]*)/);
+					if (match) {
+						const mid = match[1].trim();
+						const name = match[2].trim() || "未知用户";
+						fileUsers.set(mid, { mid, name });
+					}
+				}
+
+				if (fileUsers.size === 0) {
+					alert("未找到有效的用户数据，请确保文件格式为: MID,用户名");
+					return;
+				}
+
+				// 3. 设置操作状态
+				const operationType = update ? "sync" : "import";
+				this.currentOperation = operationType;
+				this.shouldStop = false;
+				this.showStopButton();
+
+				// 4. 分析需要进行的操作
+				const localUsers = new Map(
+					this.followList.map((user) => [user.mid.toString(), user])
+				);
+				const fileMids = new Set(fileUsers.keys());
+
+				const usersToFollow = []; // 需要添加的关注（文件有，本地没有）
+				const usersToUnfollow = []; // 需要取消的关注（本地有，文件没有）- 仅在update=true时处理
+
+				// 找出需要添加的用户（文件有，本地没有）
+				for (const [mid, fileUser] of fileUsers) {
+					if (!localUsers.has(mid)) {
+						usersToFollow.push(fileUser);
+					}
+				}
+
+				// 找出需要删除的用户（本地有，文件没有）- 仅在update=true时处理
+				if (update) {
+					for (const [mid, localUser] of localUsers) {
+						if (!fileMids.has(mid)) {
+							usersToUnfollow.push(localUser);
+						}
+					}
+				}
+
+				// 5. 检查是否有操作需要执行
+				if (usersToFollow.length === 0 && usersToUnfollow.length === 0) {
+					const message = update
+						? "关注列表已与文件完全同步，无需任何操作"
+						: "所有用户已经在关注列表中";
+					alert(message);
+					return;
+				}
+
+				// 6. 显示操作预览
+				let previewMsg = "";
+
+				if (usersToFollow.length > 0) {
+					const followPreview = usersToFollow
+						.slice(0, 3)
+						.map((u) => u.name)
+						.join(", ");
+					previewMsg += `将添加关注: ${followPreview}${
+						usersToFollow.length > 3
+							? `... 等 ${usersToFollow.length} 个用户`
+							: ""
+					}\n`;
+				}
+
+				if (update && usersToUnfollow.length > 0) {
+					const unfollowPreview = usersToUnfollow
+						.slice(0, 3)
+						.map((u) => u.uname)
+						.join(", ");
+					previewMsg += `将取消关注: ${unfollowPreview}${
+						usersToUnfollow.length > 3
+							? `... 等 ${usersToUnfollow.length} 个用户`
+							: ""
+					}\n`;
+				}
+
+				const operationText = update ? "同步" : "导入";
+				const confirmMessage = `${operationText}操作预览：\n\n${previewMsg}\n总计：添加 ${
+					usersToFollow.length
+				} 个${
+					update ? `，删除 ${usersToUnfollow.length} 个` : ""
+				}\n\n确定要执行${operationText}吗？`;
+
+				if (!confirm(confirmMessage)) {
+					return;
+				}
+
+				// 7. 更新按钮状态
+				const button = this.modal.querySelector(`#${operationType}-btn`);
+				if (button) {
+					button.disabled = true;
+					button.textContent = `${operationText}中...`;
+				}
+
+				// 8. 执行批量操作
+				let followSuccess = 0;
+				let followFailed = 0;
+				let unfollowSuccess = 0;
+				let unfollowFailed = 0;
+				const failedOperations = [];
+
+				const totalOperations = usersToFollow.length + usersToUnfollow.length;
+				let completedOperations = 0;
+
+				// 更新进度显示函数
+				const updateProgress = (current, total, stats = {}) => {
+					if (button) {
+						const percent = Math.round((current / total) * 100);
+						let statusText = `${operationText}中... ${current}/${total} (${percent}%)`;
+
+						// 添加统计信息
+						const totalSuccess =
+							(stats.followSuccess || 0) + (stats.unfollowSuccess || 0);
+						const totalFailed =
+							(stats.followFailed || 0) + (stats.unfollowFailed || 0);
+						statusText += ` | 成功:${totalSuccess} 失败:${totalFailed}`;
+
+						button.textContent = statusText;
 					}
 				};
-				reader.readAsText(file);
-			};
+				// 添加到本地列表函数
+				const addUserToLocalList = (user) => {
+					const newUserObj = {
+						mid: parseInt(user.mid),
+						uname: user.name || user.uname,
+						mtime: Math.floor(Date.now() / 1000),
+						face: "https://static.hdslb.com/images/member/noface.gif",
+						sign: "",
+						official_verify: { type: -1, desc: "" },
+						vip: { vipType: 0 },
+						follower: 0,
+						following: 0,
+					};
+					this.followList.push(newUserObj);
+					cache.set(this.followList);
+					this.filterList();
+				};
 
-			input.click();
-		}
-
-		async importFromFile() {
-			const content = await this.selectAndReadFile();
-			const fileUsers = await this.processFileOperation(content, "import");
-
-			const existingMids = new Set(
-				this.followList.map((user) => user.mid.toString())
-			);
-			const usersToFollow = Array.from(fileUsers.values()).filter(
-				(user) => !existingMids.has(user.mid)
-			);
-
-			if (usersToFollow.length === 0) {
-				alert("所有用户已经在关注列表中");
-				return;
-			}
-
-			// 显示预览
-			if (!this.showOperationPreview(usersToFollow, "follow")) {
-				return;
-			}
-
-			const result = await this.processBatchOperation(usersToFollow, "follow", {
-				onProgress: (current, total) => {
-					this.updateProgress("import", current, total);
-				},
-				onSuccess: (user) => {
-					// 添加到本地列表
-					this.addUserToLocalList(user);
-				},
-			});
-
-			this.showOperationResult(result, "导入");
-			this.resetStopState();
-		}
-
-		// 处理同步文件
-		async processSyncFile(content) {
-			// 设置操作状态
-			this.currentOperation = "sync";
-			this.shouldStop = false;
-			this.showStopButton();
-
-			const lines = content.split("\n").filter((line) => line.trim());
-			const fileUsers = new Map(); // 使用Map存储文件中的用户，便于快速查找
-
-			// 解析文件内容
-			for (const line of lines) {
-				const match = line.match(/^(\d+),([^,]*)/); // 用户名可能为空
-				if (match) {
-					const mid = match[1].trim();
-					const name = match[2].trim() || "未知用户";
-					fileUsers.set(mid, { mid, name });
-				}
-			}
-
-			if (fileUsers.size === 0) {
-				alert("未找到有效的用户数据，请确保文件格式为: MID,用户名");
-				return;
-			}
-
-			// 分析需要进行的操作
-			const currentUsers = new Map(
-				this.followList.map((user) => [user.mid.toString(), user])
-			);
-
-			const usersToAdd = []; // 需要添加的关注（文件有，本地没有）
-			const usersToRemove = []; // 需要取消的关注（本地有，文件没有）
-
-			// 找出需要添加的用户（文件有，本地没有）
-			for (const [mid, fileUser] of fileUsers) {
-				if (!currentUsers.has(mid)) {
-					usersToAdd.push(fileUser);
-				}
-			}
-
-			// 找出需要删除的用户（本地有，文件没有）
-			for (const [mid, currentUser] of currentUsers) {
-				if (!fileUsers.has(mid)) {
-					usersToRemove.push(currentUser);
-				}
-			}
-
-			if (usersToAdd.length === 0 && usersToRemove.length === 0) {
-				alert("关注列表已与文件完全同步，无需任何操作");
-				return;
-			}
-
-			// 显示同步预览
-			let previewMsg = "";
-			if (usersToAdd.length > 0) {
-				const addPreview = usersToAdd
-					.slice(0, 3)
-					.map((u) => u.name)
-					.join(", ");
-				previewMsg += `将添加关注: ${addPreview}${
-					usersToAdd.length > 3 ? `... 等 ${usersToAdd.length} 个用户` : ""
-				}\n`;
-			}
-			if (usersToRemove.length > 0) {
-				const removePreview = usersToRemove
-					.slice(0, 3)
-					.map((u) => u.uname)
-					.join(", ");
-				previewMsg += `将取消关注: ${removePreview}${
-					usersToRemove.length > 3
-						? `... 等 ${usersToRemove.length} 个用户`
-						: ""
-				}\n`;
-			}
-
-			if (
-				!confirm(
-					`同步操作预览：\n\n${previewMsg}\n总计：添加 ${usersToAdd.length} 个，删除 ${usersToRemove.length} 个\n\n确定要执行同步吗？`
-				)
-			) {
-				return;
-			}
-
-			const syncBtn = this.modal.querySelector("#sync-btn");
-			syncBtn.disabled = true;
-			syncBtn.textContent = "同步中...";
-
-			let addSuccess = 0;
-			let addFailed = 0;
-			let removeSuccess = 0;
-			let removeFailed = 0;
-			const failedOperations = [];
-
-			const totalOperations = usersToAdd.length + usersToRemove.length;
-			let completedOperations = 0;
-
-			// 先执行取消关注操作（删除）
-			for (let i = 0; i < usersToRemove.length; i++) {
-				if (this.checkShouldStop()) {
-					alert(
-						`同步已停止！\n已完成取消关注: ${i}/${usersToRemove.length}个用户`
-					);
-					break;
-				}
-				const user = usersToRemove[i];
-				try {
-					await unfollowUser(user.mid);
-					removeSuccess++;
-
-					// 从本地列表中移除
+				// 从本地列表移除函数
+				const removeUserFromLocalList = (mid) => {
 					this.followList = this.followList.filter(
-						(u) => u.mid.toString() !== user.mid.toString()
+						(u) => u.mid.toString() !== mid.toString()
 					);
-				} catch (error) {
-					removeFailed++;
-					failedOperations.push(
-						`取消关注失败: ${user.uname} (${user.mid}): ${error.message}`
-					);
-					console.error(`取消关注 ${user.uname} 失败:`, error);
-				}
-
-				completedOperations++;
-				this.updateSyncProgress(syncBtn, completedOperations, totalOperations);
-
-				if (i < usersToRemove.length - 1) {
-					await new Promise((resolve) =>
-						setTimeout(resolve, CONFIG.BATCH_DELAY)
-					);
-				}
-			}
-
-			// 再执行添加关注操作
-			for (let i = 0; i < usersToAdd.length; i++) {
-				if (this.checkShouldStop()) {
-					alert(
-						`同步已停止！\n已完成添加关注: ${i}/${usersToAdd.length}个用户`
-					);
-					break;
-				}
-				const user = usersToAdd[i];
-				try {
-					await followUser(user.mid);
-					addSuccess++;
-
-					// 添加到本地列表
-					const newUserObj = {
-						mid: parseInt(user.mid),
-						uname: user.name,
-						mtime: Math.floor(Date.now() / 1000),
-						face: "https://static.hdslb.com/images/member/noface.gif",
-						sign: "",
-						official_verify: { type: -1, desc: "" },
-						vip: { vipType: 0 },
-						follower: 0,
-						following: 0,
-					};
-					this.followList.push(newUserObj);
-				} catch (error) {
-					addFailed++;
-					failedOperations.push(
-						`添加关注失败: ${user.name} (${user.mid}): ${error.message}`
-					);
-					console.error(`关注 ${user.name} 失败:`, error);
-				}
-
-				completedOperations++;
-				this.updateSyncProgress(syncBtn, completedOperations, totalOperations);
-
-				if (i < usersToAdd.length - 1) {
-					await new Promise((resolve) =>
-						setTimeout(resolve, CONFIG.BATCH_DELAY)
-					);
-				}
-			}
-
-			// 更新缓存和界面
-			cache.set(this.followList);
-			this.filterList();
-
-			// 显示同步结果
-			let resultMessage =
-				`同步完成！\n` +
-				`添加关注: 成功 ${addSuccess}个, 失败 ${addFailed}个\n` +
-				`取消关注: 成功 ${removeSuccess}个, 失败 ${removeFailed}个`;
-
-			if (failedOperations.length > 0) {
-				resultMessage += `\n\n失败操作:\n${failedOperations
-					.slice(0, 8)
-					.join("\n")}`;
-				if (failedOperations.length > 8) {
-					resultMessage += `\n... 还有 ${failedOperations.length - 8} 个失败`;
-				}
-			}
-
-			alert(resultMessage);
-			syncBtn.disabled = false;
-			syncBtn.textContent = "从文件同步";
-
-			this.resetStopState();
-		}
-		// 更新同步进度显示
-		updateSyncProgress(button, completed, total) {
-			const percent = Math.round((completed / total) * 100);
-			button.textContent = `同步中... ${completed}/${total} (${percent}%)`;
-		}
-		// 处理导入文件
-		async processImportFile(content) {
-			// 设置操作状态
-			this.currentOperation = "import";
-			this.shouldStop = false;
-			this.showStopButton();
-
-			const lines = content.split("\n").filter((line) => line.trim());
-			const usersToFollow = [];
-
-			// 解析文件内容
-			for (const line of lines) {
-				const match = line.match(/^(\d+),([^,]+)/);
-				if (match) {
-					const mid = match[1].trim();
-					const name = match[2].trim();
-					if (mid && name) {
-						usersToFollow.push({ mid, name });
-					}
-				}
-			}
-
-			if (usersToFollow.length === 0) {
-				alert("未找到有效的用户数据，请确保文件格式为: MID,用户名");
-				return;
-			}
-
-			// 检查重复关注 - 使用本地缓存数据快速检查
-			const existingMids = new Set(
-				this.followList.map((user) => user.mid.toString())
-			);
-			const newUsers = usersToFollow.filter(
-				(user) => !existingMids.has(user.mid)
-			);
-
-			if (newUsers.length === 0) {
-				alert("所有用户已经在关注列表中");
-				return;
-			}
-
-			// 显示导入预览
-			const previewCount = Math.min(newUsers.length, 5);
-			const previewUsers = newUsers
-				.slice(0, previewCount)
-				.map((u) => u.name)
-				.join(", ");
-			const previewMsg =
-				newUsers.length > 5
-					? `${previewUsers}... 等 ${newUsers.length} 个用户`
-					: previewUsers;
-
-			if (
-				!confirm(
-					`准备关注 ${newUsers.length} 个新用户：\n${previewMsg}\n\n确定要继续吗？`
-				)
-			) {
-				return;
-			}
-
-			const importBtn = this.modal.querySelector("#import-btn");
-			importBtn.disabled = true;
-			importBtn.textContent = "导入中...";
-
-			let successCount = 0;
-			let skippedCount = usersToFollow.length - newUsers.length; // 已跳过的重复用户
-			let failedCount = 0;
-			const failedUsers = [];
-
-			for (let i = 0; i < newUsers.length; i++) {
-				// 检查是否应该停止
-				if (this.checkShouldStop()) {
-					alert(
-						`导入已停止！\n已完成: ${i}/${newUsers.length}个用户\n成功: ${successCount}个，失败: ${failedCount}个`
-					);
-					break;
-				}
-
-				const user = newUsers[i];
-
-				// 再次检查是否已在本地列表中（双重检查）
-				if (existingMids.has(user.mid)) {
-					skippedCount++;
-					continue;
-				}
-
-				try {
-					await followUser(user.mid);
-					successCount++;
-
-					// 添加到本地列表
-					const newUserObj = {
-						mid: parseInt(user.mid),
-						uname: user.name,
-						mtime: Math.floor(Date.now() / 1000),
-						face: "https://static.hdslb.com/images/member/noface.gif",
-						sign: "",
-						official_verify: { type: -1, desc: "" },
-						vip: { vipType: 0 },
-						follower: 0,
-						following: 0,
-					};
-					this.followList.push(newUserObj);
-					existingMids.add(user.mid);
-				} catch (error) {
-					failedCount++;
-					failedUsers.push(`${user.name} (${user.mid}): ${error.message}`);
-					console.error(`关注 ${user.name} 失败:`, error);
-				}
-
-				importBtn.textContent = `导入中... ${i + 1}/${newUsers.length}`;
-
-				if (i < newUsers.length - 1) {
-					await new Promise((resolve) =>
-						setTimeout(resolve, CONFIG.BATCH_DELAY)
-					);
-				}
-			}
-			// 更新缓存和界面
-			cache.set(this.followList);
-			this.filterList(); // 重新筛选以更新显示
-
-			// 显示结果
-			let resultMessage = `导入完成！\n成功: ${successCount}个，跳过: ${skippedCount}个，失败: ${failedCount}个`;
-			if (failedUsers.length > 0) {
-				resultMessage += `\n\n失败用户:\n${failedUsers
-					.slice(0, 10)
-					.join("\n")}`;
-				if (failedUsers.length > 10) {
-					resultMessage += `\n... 还有 ${failedUsers.length - 10} 个失败`;
-				}
-			}
-
-			alert(resultMessage);
-			importBtn.disabled = false;
-			importBtn.textContent = "导入关注列表";
-
-			this.resetStopState();
-		}
-		// 批量操作处理器
-		async processBatchOperation(users, operationType, options = {}) {
-			const {
-				onProgress,
-				onSuccess,
-				onError,
-				delay = CONFIG.BATCH_DELAY,
-				maxFailedCount = 3, // 新增：最大失败次数限制
-			} = options;
-
-			let successCount = 0;
-			let failedCount = 0;
-			const failedItems = [];
-
-			for (let i = 0; i < users.length; i++) {
-				if (this.checkShouldStop()) {
-					break;
-				}
-
-				// 检查失败次数是否达到上限
-				if (failedCount >= maxFailedCount) {
-					const operationText =
-						operationType === "follow" ? "关注" : "取消关注";
-					alert(
-						`${operationText}操作失败次数过多（${failedCount}次），已自动停止。请检查网络连接或账号风控状态。`
-					);
-					break;
-				}
-
-				const user = users[i];
-				try {
-					await operateUser(user.mid, operationType === "follow");
-					successCount++;
-
-					if (onSuccess) {
-						await onSuccess(user);
-					}
-				} catch (error) {
-					failedCount++;
-					failedItems.push({
-						user,
-						error: error.message,
-					});
-
-					if (onError) {
-						await onError(user, error);
-					}
-
-					// 检查失败次数是否达到上限（在catch中再次检查）
-					if (failedCount >= maxFailedCount) {
-						const operationText =
-							operationType === "follow" ? "关注" : "取消关注";
-						alert(
-							`${operationText}操作失败次数过多（${failedCount}次），已自动停止。请检查网络连接或账号风控状态。`
-						);
-						break;
-					}
-				}
-
-				// 更新进度
-				if (onProgress) {
-					onProgress(i + 1, users.length, user);
-				}
-
-				// 延迟处理（最后一个不延迟）
-				if (i < users.length - 1 && delay > 0) {
-					await new Promise((resolve) => setTimeout(resolve, delay));
-				}
-			}
-			return {
-				successCount,
-				failedCount,
-				failedItems,
-				total: users.length,
-				interrupted: failedCount >= maxFailedCount, // 新增：标记是否被中断
-			};
-		}
-
-		// 文件导入处理器
-		async processFileOperation(content, operationType) {
-			// 设置操作状态
-			this.currentOperation = operationType;
-			this.shouldStop = false;
-			this.showStopButton();
-
-			const lines = content.split("\n").filter((line) => line.trim());
-			const fileUsers = new Map();
-
-			// 解析文件内容
-			for (const line of lines) {
-				const match = line.match(/^(\d+),([^,]*)/);
-				if (match) {
-					const mid = match[1].trim();
-					const name = match[2].trim() || "未知用户";
-					fileUsers.set(mid, { mid, name });
-				}
-			}
-
-			if (fileUsers.size === 0) {
-				throw new Error("未找到有效的用户数据，请确保文件格式为: MID,用户名");
-			}
-
-			return fileUsers;
-		}
-		// 辅助函数
-		async selectAndReadFile() {
-			return new Promise((resolve, reject) => {
-				const input = document.createElement("input");
-				input.type = "file";
-				input.accept = ".txt";
-
-				input.onchange = (e) => {
-					const file = e.target.files[0];
-					if (!file) {
-						reject(new Error("未选择文件"));
-						return;
-					}
-
-					const reader = new FileReader();
-					reader.onload = (event) => resolve(event.target.result);
-					reader.onerror = () => reject(new Error("文件读取失败"));
-					reader.readAsText(file);
+					cache.set(this.followList);
+					this.filterList();
 				};
 
-				input.click();
-			});
-		}
-		showOperationPreview(users, operationType) {
-			const operationText = operationType === "follow" ? "关注" : "取消关注";
-			const previewCount = Math.min(users.length, 5);
-			const previewUsers = users
-				.slice(0, previewCount)
-				.map((u) => u.name || u.uname)
-				.join(", ");
-			const previewMsg =
-				users.length > 5
-					? `${previewUsers}... 等 ${users.length} 个用户`
-					: previewUsers;
+				// 先执行取消关注操作（仅在update=true时）
+				if (update && usersToUnfollow.length > 0) {
+					for (let i = 0; i < usersToUnfollow.length; i++) {
+						if (this.checkShouldStop()) {
+							alert(
+								`${operationText}已停止！\n已完成取消关注: ${i}/${usersToUnfollow.length}个用户\n成功: ${unfollowSuccess}个，失败: ${unfollowFailed}个`
+							);
+							break;
+						}
 
-			return confirm(
-				`准备${operationText} ${users.length} 个用户：\n${previewMsg}\n\n确定要继续吗？`
-			);
-		}
-		showSyncPreview(usersToAdd, usersToRemove) {
-			let previewMsg = "";
-			if (usersToAdd.length > 0) {
-				const addPreview = usersToAdd
-					.slice(0, 3)
-					.map((u) => u.name)
-					.join(", ");
-				previewMsg += `将添加关注: ${addPreview}${
-					usersToAdd.length > 3 ? `... 等 ${usersToAdd.length} 个用户` : ""
-				}\n`;
-			}
-			if (usersToRemove.length > 0) {
-				const removePreview = usersToRemove
-					.slice(0, 3)
-					.map((u) => u.uname)
-					.join(", ");
-				previewMsg += `将取消关注: ${removePreview}${
-					usersToRemove.length > 3
-						? `... 等 ${usersToRemove.length} 个用户`
-						: ""
-				}\n`;
-			}
+						const user = usersToUnfollow[i];
+						try {
+							await unfollowUser(user.mid);
+							unfollowSuccess++;
+							removeUserFromLocalList(user.mid);
+						} catch (error) {
+							unfollowFailed++;
+							failedOperations.push(
+								`取消关注失败: ${user.uname} (${user.mid}): ${error.message}`
+							);
+							console.error(`取消关注 ${user.uname} 失败:`, error);
+						}
 
-			return confirm(
-				`同步操作预览：\n\n${previewMsg}\n总计：添加 ${usersToAdd.length} 个，删除 ${usersToRemove.length} 个\n\n确定要执行同步吗？`
-			);
-		}
-		addUserToLocalList(user) {
-			const newUserObj = {
-				mid: parseInt(user.mid),
-				uname: user.name || user.uname,
-				mtime: Math.floor(Date.now() / 1000),
-				face: "https://static.hdslb.com/images/member/noface.gif",
-				sign: "",
-				official_verify: { type: -1, desc: "" },
-				vip: { vipType: 0 },
-				follower: 0,
-				following: 0,
-			};
-			this.followList.push(newUserObj);
-			cache.set(this.followList);
-			this.filterList();
-		}
-		removeUserFromLocalList(mid) {
-			this.followList = this.followList.filter(
-				(u) => u.mid.toString() !== mid.toString()
-			);
-			cache.set(this.followList);
-			this.filterList();
-		}
-		updateProgress(operationType, current, total) {
-			const button = this.modal.querySelector(`#${operationType}-btn`);
-			if (button) {
-				const percent = Math.round((current / total) * 100);
-				button.textContent = `${
-					operationType === "import" ? "导入" : "同步"
-				}中... ${current}/${total} (${percent}%)`;
-			}
-		}
-		showOperationResult(result, operationName) {
-			let message = `${operationName}完成！\n成功: ${result.successCount}个，失败: ${result.failedCount}个`;
+						completedOperations++;
+						updateProgress(completedOperations, totalOperations, {
+							followSuccess,
+							followFailed,
+							unfollowSuccess,
+							unfollowFailed,
+						});
 
-			if (result.failedItems.length > 0) {
-				const failedList = result.failedItems
-					.slice(0, 8)
-					.map(
-						(item) =>
-							`${item.user.uname || item.user.name} (${item.user.mid}): ${
-								item.error
-							}`
-					)
-					.join("\n");
-				message += `\n\n失败操作:\n${failedList}`;
-				if (result.failedItems.length > 8) {
-					message += `\n... 还有 ${result.failedItems.length - 8} 个失败`;
+						if (i < usersToUnfollow.length - 1) {
+							await new Promise((resolve) =>
+								setTimeout(resolve, CONFIG.BATCH_DELAY)
+							);
+						}
+					}
 				}
-			}
 
-			alert(message);
-		}
-		showSyncResult(addResult, removeResult) {
-			let message =
-				`同步完成！\n` +
-				`添加关注: 成功 ${addResult.successCount}个, 失败 ${addResult.failedCount}个\n` +
-				`取消关注: 成功 ${removeResult.successCount}个, 失败 ${removeResult.failedCount}个`;
+				// 再执行添加关注操作
+				if (usersToFollow.length > 0) {
+					for (let i = 0; i < usersToFollow.length; i++) {
+						if (this.checkShouldStop()) {
+							alert(
+								`${operationText}已停止！\n已完成添加关注: ${i}/${usersToFollow.length}个用户\n成功: ${followSuccess}个，失败: ${followFailed}个`
+							);
+							break;
+						}
 
-			const allFailed = [...addResult.failedItems, ...removeResult.failedItems];
-			if (allFailed.length > 0) {
-				const failedList = allFailed
-					.slice(0, 8)
-					.map(
-						(item) =>
-							`${item.user.uname || item.user.name} (${item.user.mid}): ${
-								item.error
-							}`
-					)
-					.join("\n");
-				message += `\n\n失败操作:\n${failedList}`;
-				if (allFailed.length > 8) {
-					message += `\n... 还有 ${allFailed.length - 8} 个失败`;
+						const user = usersToFollow[i];
+						try {
+							await followUser(user.mid);
+							followSuccess++;
+							addUserToLocalList(user);
+						} catch (error) {
+							followFailed++;
+							failedOperations.push(
+								`添加关注失败: ${user.name} (${user.mid}): ${error.message}`
+							);
+							console.error(`关注 ${user.name} 失败:`, error);
+						}
+
+						completedOperations++;
+						updateProgress(completedOperations, totalOperations, {
+							followSuccess,
+							followFailed,
+							unfollowSuccess,
+							unfollowFailed,
+						});
+
+						if (i < usersToFollow.length - 1) {
+							await new Promise((resolve) =>
+								setTimeout(resolve, CONFIG.BATCH_DELAY)
+							);
+						}
+					}
 				}
-			}
 
-			alert(message);
+				// 9. 显示操作结果
+				let resultMessage = `${operationText}完成！\n`;
+				resultMessage += `添加关注: 成功 ${followSuccess}个, 失败 ${followFailed}个\n`;
+
+				if (update) {
+					resultMessage += `取消关注: 成功 ${unfollowSuccess}个, 失败 ${unfollowFailed}个`;
+				}
+
+				if (failedOperations.length > 0) {
+					resultMessage += `\n\n失败操作:\n${failedOperations
+						.slice(0, 8)
+						.join("\n")}`;
+					if (failedOperations.length > 8) {
+						resultMessage += `\n... 还有 ${failedOperations.length - 8} 个失败`;
+					}
+				}
+
+				alert(resultMessage);
+
+				// 10. 恢复按钮状态
+				if (button) {
+					button.disabled = false;
+					button.textContent = update ? "从文件同步" : "导入关注列表";
+				}
+
+				this.resetStopState();
+			} catch (error) {
+				alert(`操作失败: ${error.message}`);
+				console.error("importFromFile error:", error);
+			}
 		}
 
 		// 批量获取粉丝数（实时后台获取）
