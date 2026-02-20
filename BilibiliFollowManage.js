@@ -1,10 +1,9 @@
 // ==UserScript==
-// @name         B站关注管理（支持导入导出关注列表）
-// @namespace    http://tampermonkey.net/
-// @version      3.1
-// @description  高效管理B站关注列表，支持导入导出关注列表、取关、智能筛选、实时粉丝数获取、批量操作等功能；注意，短时间内大量关注可能被风控（需要在关注列表页面刷新后使用）
-// @author       苡淞（Yis_Rime）符若_float（float0108）
-// @homepage     https://github.com/YisRime/BilibiliFollowManage
+// @name         B站关注管理
+// @namespace    https://github.com/YisRime/BilibiliFollowManage
+// @version      4.0
+// @description  关注管理，支持筛选、导入导出、批量取关与关注
+// @author       苡淞, float0108
 // @match        https://space.bilibili.com/*/relation/follow*
 // @match        https://space.bilibili.com/*/fans/follow*
 // @grant        GM_xmlhttpRequest
@@ -14,1374 +13,692 @@
 // ==/UserScript==
 
 (function () {
-	"use strict";
-	// 基础配置
-	const CONFIG = {
-		API_DELAY: 500,
-		PAGE_SIZE: 50,
-		BATCH_DELAY: 300,
-		FANS_API_DELAY: 500,
-		CACHE_DURATION: 30 * 24 * 60 * 60 * 1000,
-		IMPORT_BATCH_DELAY: 300, // 导入时的请求间隔
-	};
-	// 提示消息
-	const MESSAGES = {
-		LOADING: "正在加载数据...",
-		ERROR_NO_DATA: "未能获取关注列表，请检查是否已登录",
-		ERROR_NO_UID: "无法获取用户UID，请确保已登录",
-		CONFIRM_UNFOLLOW: "确定要取关选中的用户吗？此操作不可撤销！",
-		SELECT_USERS: "请选择要取关的用户",
-	};
-	// 添加样式
-	GM_addStyle(`
-        .follow-manager-btn {
-  position: fixed;
-  top: 100px;
-  right: 30px;
-  z-index: 9999;
-  background: #00a1d6;
-  color: #fff;
-  padding: 10px 20px;
-  border-radius: 6px;
-  cursor: pointer;
-  border: none;
-  box-shadow: 0 4px 12px rgba(0, 161, 214, 0.3);
-  transition: all 0.3s;
-  font-size: 14px;
-}
-.follow-manager-btn:hover {
-  background: #0088cc;
-  transform: translateY(-2px);
-}
-.follow-manager-btn:disabled {
-  background: #ccc;
-  cursor: not-allowed;
-  transform: none;
-}
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  z-index: 10000;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  backdrop-filter: blur(4px);
-}
-.modal-content {
-  background: #fff;
-  border-radius: 12px;
-  width: 90vw;
-  max-width: 1200px;
-  height: 80vh;
-  max-height: 800px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
-}
-.modal-header {
-  padding: 20px;
-  border-bottom: 1px solid #e9ecef;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  display: flex;
-  align-items: center;
-}
-.modal-header h3 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-}
-.close-btn {
-  background: none;
-  border: none;
-  font-size: 24px;
-  cursor: pointer;
-  color: #fff;
-  margin-left: auto;
-}
-.close-btn:hover {
-  color: #ff4757;
-}
-.modal-body {
-  flex: 1;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  padding: 20px;
-}
-.modal-filters {
-  background: #f8f9fa;
-  padding: 15px;
-  border-radius: 8px;
-  margin-bottom: 15px;
-  border: 1px solid #dee2e6;
-}
-.filter-row {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: nowrap;
-}
-.filter-row input,
-.filter-row select {
-  padding: 8px 12px;
-  border: 1px solid #ced4da;
-  border-radius: 6px;
-  font-size: 13px;
-  background: #fff;
-  transition: all 0.2s;
-}
-.filter-row input:focus,
-.filter-row select:focus {
-  outline: none;
-  border-color: #007bff;
-  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
-}
-.filter-row input[type="text"] {
-  flex: 1;
-  min-width: 140px;
-}
-.filter-row input[type="date"] {
-  min-width: 80px;
-}
-.filter-row input[type="number"] {
-  min-width: 60px;
-  width: 60px;
-}
-.filter-row select {
-  min-width: 80px;
-}
-.filter-row label {
-  font-size: 13px;
-  white-space: nowrap;
-  color: #495057;
-  font-weight: 500;
-}
-.modal-list {
-  flex: 1;
-  overflow-y: auto;
-  border: 1px solid #dee2e6;
-  border-radius: 8px;
-  background: #fff;
-}
-.modal-stats {
-  padding: 15px 20px;
-  background: #f8f9fa;
-  border-top: 1px solid #dee2e6;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.follow-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
-}
-.follow-table th {
-  background: #fff;
-  padding: 12px 8px;
-  border-bottom: 2px solid #dee2e6;
-  text-align: left;
-  font-weight: 600;
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  cursor: pointer;
-  user-select: none;
-  transition: all 0.2s;
-}
-.follow-table th:nth-child(4) {
-  min-width: 100px;
-}
-.follow-table th:nth-child(8) {
-  min-width: 120px;
-}
-.follow-table th:hover {
-  background: #f8f9fa;
-}
-.follow-table th.sortable::after {
-  content: "↕";
-  margin-left: 4px;
-  color: #6c757d;
-  font-size: 11px;
-}
-.follow-table th.sort-asc::after {
-  content: "↑";
-  color: #007bff;
-}
-.follow-table th.sort-desc::after {
-  content: "↓";
-  color: #007bff;
-}
-.follow-table td {
-  padding: 10px 8px;
-  border-bottom: 1px solid #f1f3f4;
-  vertical-align: middle;
-}
-.follow-table tr:hover {
-  background: #f8f9fa;
-}
-.follow-table tr.selected {
-  background: #e3f2fd;
-}
-.follow-table img {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: 2px solid #fff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-}
-.batch-actions button {
-  padding: 8px 16px;
-  border: 1px solid #007bff;
-  border-radius: 4px;
-  background: #007bff;
-  color: white;
-  cursor: pointer;
-  transition: all 0.2s;
-  font-size: 13px;
-}
-.batch-actions button:hover {
-  background: #0056b3;
-}
-.batch-actions button:disabled {
-  background: #6c757d;
-  border-color: #6c757d;
-  cursor: not-allowed;
-}
-.batch-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
+    "use strict";
 
+    // 样式
+    GM_addStyle(`
+        :root {
+            --b-blue: #00aeec; --b-pink: #fb7299; --b-red: #f44336; --b-orange: #ff9800; --b-green: #4caf50;
+            --b-text-1: #18191c; --b-text-2: #61666d; --b-text-3: #9499a0;
+            --b-bg-1: #ffffff; --b-bg-2: #f1f2f3; --b-bg-3: #e3e5e7;
+            --b-border-color: #dcdfe6; --b-shadow-color: rgba(0, 0, 0, 0.1);
+            --b-transition: all 0.2s ease-in-out;
+        }
+        .bm-btn {
+            position: fixed; top: 160px; right: 20px; z-index: 999;
+            background: var(--b-blue); color: var(--b-bg-1);
+            padding: 8px 16px; border-radius: 8px; border: none;
+            cursor: pointer; box-shadow: 0 4px 12px rgba(0,174,236,0.3);
+            font-size: 14px; font-weight: 500; transition: var(--b-transition);
+        }
+        .bm-btn:hover { background: #00a1d6; transform: translateY(-2px) scale(1.05); }
+        .bm-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 10000;
+            display: flex; justify-content: center; align-items: center; backdrop-filter: blur(4px);
+        }
+        .bm-win {
+            width: 95vw; max-width: 1400px; height: 85vh;
+            background: var(--b-bg-1); border-radius: 12px;
+            display: flex; flex-direction: column; overflow: hidden;
+            box-shadow: 0 12px 32px var(--b-shadow-color);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        .bm-top-bar { display: flex; flex-direction: column; }
+        .bm-bar {
+            padding: 12px 16px; background: var(--b-bg-1); display: flex; gap: 10px;
+            align-items: center; border-bottom: 1px solid var(--b-bg-3); flex-wrap: wrap;
+        }
+        .bm-filter-panel, .bm-io-panel {
+            display: none; padding: 10px 16px; gap: 10px; align-items: center; flex-wrap: wrap;
+            border-bottom: 1px solid var(--b-bg-3); background: #fafbfc;
+        }
+        .bm-control {
+            padding: 6px 10px; border: 1px solid var(--b-border-color); border-radius: 6px;
+            font-size: 13px; outline: none; color: var(--b-text-1);
+            background: var(--b-bg-1); transition: var(--b-transition); box-sizing: border-box; height: 31px;
+        }
+        .bm-control:focus, .bm-control:hover { border-color: var(--b-blue); box-shadow: 0 0 0 2px rgba(0,174,236,0.1); }
+        .bm-group { display: flex; align-items: center; }
+        .bm-group .bm-control { border-radius: 6px 0 0 6px; }
+        .bm-group .bm-toggle {
+            padding: 6px 10px; background: var(--b-bg-2); cursor: pointer;
+            font-size: 13px; color: var(--b-text-2); font-weight: 600; user-select: none;
+            border: 1px solid var(--b-border-color); border-left: none;
+            border-radius: 0 6px 6px 0; transition: var(--b-transition);
+            box-sizing: border-box; height: 31px; display: flex; align-items: center;
+        }
+        .bm-group .bm-toggle:hover { background: #dce0e6; color: var(--b-text-1); }
+        .bm-act-btn {
+            padding: 6px 14px; background: var(--b-bg-1); border-radius: 6px;
+            cursor: pointer; font-size: 13px; transition: var(--b-transition);
+            border: 1px solid var(--b-border-color); white-space: nowrap;
+        }
+        .bm-act-btn:hover:not(:disabled) { color: var(--b-blue); border-color: var(--b-blue); background: #f0faff; }
+        .bm-act-btn.primary { background: var(--b-blue); color: #fff; border-color: var(--b-blue); }
+        .bm-act-btn.primary:hover:not(:disabled) { background: #00a1d6; border-color: #00a1d6; color: #fff; }
+        .bm-act-btn.danger { color: var(--b-red); border-color: #ffcdd2; }
+        .bm-act-btn.danger:hover:not(:disabled) { background: var(--b-red); color: #fff; border-color: var(--b-red); }
+        .bm-act-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .bm-actions { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+        .bm-status { font-size: 13px; color: var(--b-text-3); font-variant-numeric: tabular-nums; }
+        .bm-close {
+            font-size: 24px; cursor: pointer; color: var(--b-text-3);
+            margin-left: 8px; line-height: 1; transition: var(--b-transition);
+        }
+        .bm-close:hover { color: var(--b-text-1); transform: scale(1.1) rotate(90deg); }
+        .bm-body { flex: 1; overflow-y: auto; scrollbar-width: thin; }
+        .bm-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+        .bm-table th {
+            position: sticky; top: 0; background: #fafafa; z-index: 10;
+            padding: 12px 10px; border-bottom: 1px solid var(--b-bg-3);
+            color: var(--b-text-2); cursor: pointer; text-align: left; font-weight: 600;
+            white-space: nowrap; user-select: none; transition: var(--b-transition);
+        }
+        .bm-table th:hover { color: var(--b-blue); background: var(--b-bg-2); }
+        .bm-table th.sorting { color: var(--b-blue); background: #eaf8ff; }
+        .bm-table th .sort-order { font-size: 11px; color: var(--b-text-3); margin-left: 2px; }
+        .bm-table td {
+            padding: 6px 10px; border-bottom: 1px solid var(--b-bg-2); height: 44px;
+            box-sizing: border-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--b-text-1);
+        }
+        .bm-table tr:hover { background: #f9faff; }
+        .bm-table tr.sel { background: #e3f5ff !important; }
+        .bm-table tr.new-import { background: #fff0f0; }
+        .bm-user-row { display: flex; align-items: center; gap: 10px; width: 100%; overflow: hidden; }
+        .bm-face { width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0; border: 1px solid #f1f1f1; object-fit: cover; }
+        .bm-info { flex: 1; overflow: hidden; }
+        .bm-name { font-weight: 500; color: var(--b-text-1); text-decoration: none; font-size: 14px; }
+        .bm-name:hover { color: var(--b-blue); }
+        .bm-name.special { color: var(--b-orange); font-weight: 600; }
+        .bm-sign { color: var(--b-text-2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; display: block; }
+        .bm-tag {
+            font-size: 12px; padding: 2px 6px; border-radius: 4px; border: 1px solid;
+            cursor: default; background-color: var(--b-bg-1);
+        }
+        .tag-vip { color: var(--b-pink); border-color: var(--b-pink); }
+        .tag-off { color: var(--b-blue); border-color: var(--b-blue); }
+        .tag-per { color: var(--b-orange); border-color: var(--b-orange); }
+        .tag-none { color: var(--b-text-3); border-color: var(--b-bg-3); }
     `);
-	// 工具函数
-	const getUserId = () => {
-		const uidMatch = location.pathname.match(/space\/(\d+)/);
-		return (
-			uidMatch?.[1] || document.cookie.match(/DedeUserID=(\d+)/)?.[1] || null
-		);
-	};
-	const getCsrfToken = () =>
-		document.cookie.match(/bili_jct=([^;]+)/)?.[1] || "";
-	// 缓存管理
-	const cache = {
-		get() {
-			const cached = localStorage.getItem("bilibili_follow_cache");
-			if (!cached) return null;
-			const data = JSON.parse(cached);
-			return data.expiry > Date.now() ? data.list : null;
-		},
-		set(list) {
-			localStorage.setItem(
-				"bilibili_follow_cache",
-				JSON.stringify({
-					list,
-					expiry: Date.now() + CONFIG.CACHE_DURATION,
-				})
-			);
-		},
-		getUserInfo(mid) {
-			const cached = localStorage.getItem(`bilibili_user_${mid}`);
-			if (!cached) return null;
-			const data = JSON.parse(cached);
-			return data.timestamp &&
-				Date.now() - data.timestamp < CONFIG.CACHE_DURATION
-				? data
-				: null;
-		},
-		setUserInfo(mid, info) {
-			localStorage.setItem(
-				`bilibili_user_${mid}`,
-				JSON.stringify({ ...info, timestamp: Date.now() })
-			);
-		},
-		clear() {
-			localStorage.removeItem("bilibili_follow_cache");
-		},
-		clearUserInfo() {
-			let count = 0;
-			for (let i = localStorage.length - 1; i >= 0; i--) {
-				const key = localStorage.key(i);
-				if (key && key.startsWith("bilibili_user_")) {
-					localStorage.removeItem(key);
-					count++;
-				}
-			}
-			return count;
-		},
-		removeUserInfo(mid) {
-			localStorage.removeItem(`bilibili_user_${mid}`);
-		},
-	};
-	// 获取用户粉丝数信息
-	const fetchUserInfo = async (mid) => {
-		const cached = cache.getUserInfo(mid);
-		if (cached) return cached;
-		try {
-			const res = await fetch(
-				`https://api.bilibili.com/x/relation/stat?vmid=${mid}`,
-				{
-					credentials: "include",
-					headers: { Referer: "https://space.bilibili.com/" },
-				}
-			);
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			const data = await res.json();
-			let info;
-			if (data.code === 0 && data.data) {
-				info = {
-					follower: data.data.follower || 0,
-					following: data.data.following || 0,
-					timestamp: Date.now(),
-				};
-			} else if (data.code === -404 || data.code === -400) {
-				info = { follower: -1, following: -1, timestamp: Date.now() };
-			} else {
-				info = { follower: 0, following: 0, timestamp: Date.now() };
-			}
-			cache.setUserInfo(mid, info);
-			return info;
-		} catch (error) {
-			const defaultInfo = { follower: 0, following: 0, timestamp: Date.now() };
-			cache.setUserInfo(mid, defaultInfo);
-			return defaultInfo;
-		}
-	};
 
-	// 用户操作函数
-	const operateUser = async (mid, follow = true) => {
-		return new Promise((resolve, reject) => {
-			GM_xmlhttpRequest({
-				method: "POST",
-				url: "https://api.bilibili.com/x/relation/modify",
-				headers: {
-					"Content-Type": "application/x-www-form-urlencoded",
-					Cookie: document.cookie,
-				},
-				data: `fid=${mid}&act=${
-					follow ? 1 : 2
-				}&re_src=11&csrf=${getCsrfToken()}`,
-				onload: function (response) {
-					const data = JSON.parse(response.responseText);
-					data.code === 0
-						? resolve(data)
-						: reject(
-								new Error(data.message || (follow ? "关注失败" : "取关失败"))
-						  );
-				},
-				onerror: () => reject(new Error("网络请求失败")),
-			});
-		});
-	};
+    class App {
+        constructor() {
+            // 状态管理
+            this.state = {
+                list: [], // 关注数据
+                running: false, // 任务状态
+                sortCriteria: [], // 复合排序
+                filterMode: { fans: '>=', date: '<=' }, // 筛选模式
+                selectedMids: new Set() // 选中状态
+            };
+            this.uiRoot = null;
+            this.dataLoaded = false;
+            // 获取 UID
+            this.uid = window.location.pathname.match(/space\/(\d+)/)?.[1] || document.cookie.match(/DedeUserID=(\d+)/)?.[1];
+            // 创建入口
+            const btn = document.createElement('button');
+            btn.className = 'bm-btn';
+            btn.textContent = '关注管理';
+            btn.onclick = () => this.show();
+            document.body.appendChild(btn);
+        }
 
-	// 保持原有函数兼容性
-	const followUser = (mid) => operateUser(mid, true);
-	const unfollowUser = (mid) => operateUser(mid, false);
+        // 显示 UI
+        show() {
+            if (!this.uiRoot) {
+                this.initUI();
+            }
+            this.uiRoot.style.display = 'flex';
+            if (!this.dataLoaded) {
+                this.loadData();
+            }
+        }
 
-	// 主管理类
-	class SimpleFollowManager {
-		constructor() {
-			this.modal = null;
-			this.isLoading = false;
-			this.followList = [];
-			this.filteredList = [];
-			this.sortField = "mtime";
-			this.sortOrder = "desc";
-			this.shouldStop = false;
-			this.currentOperation = null; // 'unfollow', 'import', 'sync'
-			this.createButton();
-		}
-		createButton() {
-			const btn = document.createElement("button");
-			btn.innerText = "管理关注";
-			btn.className = "follow-manager-btn";
-			btn.onclick = () => this.toggleModal();
-			document.body.appendChild(btn);
-			this.btn = btn;
-		}
-		async toggleModal() {
-			if (this.modal) return this.closeModal();
-			if (this.isLoading) return;
-			this.setLoading(true);
-			try {
-				this.createModal();
-				// 首先尝试从缓存获取数据
-				const cachedList = cache.get();
-				if (cachedList?.length > 0) {
-					this.followList = cachedList;
-					this.filteredList = cachedList;
-					this.renderTable();
-					// 在后台获取粉丝数信息
-					this.fetchBatchUsersFansRealtime(cachedList);
-				} else {
-					this.showLoading(MESSAGES.LOADING);
-					const list = await this.fetchFollowList();
-					if (list.length > 0) {
-						cache.set(list);
-						this.followList = list;
-						this.filteredList = list;
-						this.renderTable();
-					} else {
-						this.showError(MESSAGES.ERROR_NO_DATA);
-					}
-				}
-			} catch (error) {
-				console.error("加载失败:", error);
-				this.showError("加载失败: " + error.message);
-			} finally {
-				this.setLoading(false);
-			}
-		}
-		closeModal() {
-			if (this.modal) {
-				this.modal.remove();
-				this.modal = null;
-			}
-		}
-		setLoading(loading) {
-			this.isLoading = loading;
-			this.btn.disabled = loading;
-		}
-		async fetchFollowList() {
-			const uid = getUserId();
-			if (!uid) throw new Error(MESSAGES.ERROR_NO_UID);
-			let page = 1;
-			let result = [];
-			while (true) {
-				const res = await fetch(
-					`https://api.bilibili.com/x/relation/followings?vmid=${uid}&pn=${page}&ps=${CONFIG.PAGE_SIZE}&order=desc&order_type=attention`,
-					{
-						credentials: "include",
-						headers: { Referer: "https://space.bilibili.com/" },
-					}
-				);
-				if (!res.ok) throw new Error(`HTTP ${res.status}`);
-				const data = await res.json();
-				if (data.code === 0 && data.data?.list) {
-					result = result.concat(data.data.list);
-					if (data.data.list.length < CONFIG.PAGE_SIZE) break;
-					page++;
-					await new Promise((resolve) => setTimeout(resolve, CONFIG.API_DELAY));
-				} else {
-					throw new Error(data.message || "API错误");
-				}
-			}
-			return result;
-		}
-		createModal() {
-			this.modal = document.createElement("div");
-			this.modal.className = "modal-overlay";
-			this.modal.innerHTML = `
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h3>关注管理</h3>
-                        <button class="close-btn">&times;</button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="modal-filters">
-                            <div class="filter-row">
-                                <input id="filter-input" type="text" placeholder="搜索UP主昵称或简介">
-                                <select id="filter-status">
-                                    <option value="">账号状态</option>
-                                    <option value="normal">正常账号</option>
-                                    <option value="invalid">失效账号</option>
-                                </select>
-                                <select id="filter-vip">
-                                    <option value="">大会员</option>
-                                    <option value="annual">年度大会员</option>
-                                    <option value="monthly">月度大会员</option>
-                                    <option value="false">非大会员</option>
-                                </select>
-                                <select id="filter-official">
-                                    <option value="">认证状态</option>
-                                    <option value="0">个人认证</option>
-                                    <option value="1">机构认证</option>
-                                    <option value="false">未认证</option>
-                                </select>
-                                <input type="date" id="filter-date-start" title="开始日期">
-                                <input type="date" id="filter-date-end" title="结束日期">
-                                <input type="number" id="filter-fans-min" placeholder="最少粉丝数" min="0" title="最少粉丝数">
-                                <input type="number" id="filter-fans-max" placeholder="最多粉丝数" min="0" title="最多粉丝数">
+        // 隐藏UI
+        hide() {
+            if (this.uiRoot) {
+                this.uiRoot.style.display = 'none';
+            }
+        }
+
+        // 网络请求
+        req(url, method = 'GET', data = null) {
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method, url, data,
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': document.cookie },
+                    onload: r => {
+                        try {
+                            const res = JSON.parse(r.responseText);
+                            res.code === 0 ? resolve(res) : reject(res.message);
+                        } catch(e) { reject('JSON Parse Error'); }
+                    },
+                    onerror: () => reject('Network Error')
+                });
+            });
+        }
+
+        // 初始化
+        initUI() {
+            if (this.uiRoot) return;
+            const el = document.createElement('div');
+            el.className = 'bm-overlay';
+            el.style.display = 'none';
+            this.uiRoot = el;
+            el.innerHTML = `
+                <div class="bm-win">
+                    <div class="bm-top-bar">
+                        <div class="bm-bar">
+                            <input id="bm-k" class="bm-control" placeholder="搜索..." style="width:160px">
+                            <button class="bm-act-btn" id="bm-btn-toggle-filter">筛选</button>
+                            <button class="bm-act-btn" id="bm-btn-toggle-io">导入导出</button>
+                            <div class="bm-actions">
+                                <span class="bm-status" id="bm-status">准备中...</span>
+                                <button class="bm-act-btn" id="bm-btn-fans">获取粉丝</button>
+                                <button class="bm-act-btn primary" id="bm-btn-follow" disabled style="display:none;">关注</button>
+                                <button class="bm-act-btn danger" id="bm-btn-unfollow" disabled>取关</button>
+                                <div class="bm-close" id="bm-btn-close">✕</div>
                             </div>
                         </div>
-                        <div class="modal-list">
-                            <table class="follow-table">
-                                <thead>
-                                    <tr>
-                                        <th><input type="checkbox" id="table-select-all"></th>
-                                        <th>头像</th>
-                                        <th class="sortable" data-sort="uname">昵称</th>
-                                        <th class="sortable" data-sort="follower">粉丝数</th>
-                                        <th class="sortable" data-sort="mtime">关注时间</th>
-                                        <th>简介</th>
-                                        <th>认证</th>
-                                        <th>大会员</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="table-tbody"></tbody>
-                            </table>
+                        <div class="bm-filter-panel" id="bm-filter-panel">
+                            <div class="bm-group">
+                                <input type="number" id="bm-f-val" class="bm-control" placeholder="粉丝数" style="width:80px">
+                                <div class="bm-toggle" id="bm-f-tog">≥</div>
+                            </div>
+                            <div class="bm-group">
+                                <input type="date" id="bm-d-val" class="bm-control" style="width:120px">
+                                <div class="bm-toggle" id="bm-d-tog">早于</div>
+                            </div>
+                            <select id="bm-sel-vip" class="bm-control">
+                                <option value="">会员</option>
+                                <option value="2">年度</option>
+                                <option value="1">会员</option>
+                                <option value="0">无</option>
+                            </select>
+                            <select id="bm-sel-verify" class="bm-control">
+                                <option value="">认证</option>
+                                <option value="1">官方</option>
+                                <option value="0">个人</option>
+                                <option value="-1">无</option>
+                            </select>
+                            <button class="bm-act-btn" id="bm-btn-sel-deactivated" style="margin-left: 10px;">勾选注销</button>
+                             <button class="bm-act-btn" id="bm-btn-deselect-special">排除特关</button>
+                        </div>
+                        <div class="bm-io-panel" id="bm-io-panel">
+                             <button class="bm-act-btn" id="bm-btn-import">导入 CSV</button>
+                             <button class="bm-act-btn" id="bm-btn-import-json">导入 JSON</button>
+                             <button class="bm-act-btn" id="bm-btn-export">导出 CSV</button>
+                             <button class="bm-act-btn" id="bm-btn-export-json">导出 JSON</button>
                         </div>
                     </div>
-                    <div class="modal-stats">
-                        <span>显示: <span id="show-count">0</span> / <span id="total-count">0</span>人 | 已选择: <span id="selected-count">0</span>人</span>
-                        <div class="batch-actions">
-                            <button id="unfollow-btn">取关选中用户</button>
-                            <button id="fetch-fans-btn">获取全部粉丝数</button>
-                            <button id="export-btn">导出选中用户</button>
-                            <button id="import-btn">从文件导入</button>
-                            <button id="sync-btn">从文件同步</button>
-                            <button id="clear-cache-btn">刷新列表</button>
-                            <button id="stop-btn" style="display: none; background: #dc3545; border-color: #dc3545;">强制停止</button>
-                        </div>
+                    <div class="bm-body">
+                        <table class="bm-table">
+                            <thead>
+                                <tr>
+                                    <th width="30"><input type="checkbox" id="bm-all"></th>
+                                    <th data-sort="uname">用户 ↕</th>
+                                    <th width="110" data-sort="follower">粉丝数 ↕</th>
+                                    <th width="120" data-sort="mtime">关注时间 ↕</th>
+                                    <th width="80" data-sort="vip">会员 ↕</th>
+                                    <th width="70" data-sort="verify">认证 ↕</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bm-list"></tbody>
+                        </table>
                     </div>
-                </div>
-            `;
-			document.body.appendChild(this.modal);
-			this.bindEvents();
-		}
-		bindEvents() {
-			// 关闭按钮
-			this.modal.querySelector(".close-btn").onclick = () => this.closeModal();
-			this.modal.onclick = (e) => {
-				if (e.target === this.modal) this.closeModal();
-			};
-			// 筛选
-			this.modal.querySelector("#filter-input").oninput = () =>
-				this.filterList();
-			this.modal.querySelector("#filter-status").onchange = () =>
-				this.filterList();
-			this.modal.querySelector("#filter-vip").onchange = () =>
-				this.filterList();
-			this.modal.querySelector("#filter-official").onchange = () =>
-				this.filterList();
-			this.modal.querySelector("#filter-date-start").onchange = () =>
-				this.filterList();
-			this.modal.querySelector("#filter-date-end").onchange = () =>
-				this.filterList();
-			this.modal.querySelector("#filter-fans-min").oninput = () =>
-				this.filterList();
-			this.modal.querySelector("#filter-fans-max").oninput = () =>
-				this.filterList();
-			// 排序
-			this.modal.querySelectorAll("th.sortable").forEach((th) => {
-				th.addEventListener("click", () =>
-					this.sortList(th.getAttribute("data-sort"))
-				);
-			});
-			// 全选
-			this.modal.querySelector("#table-select-all").onchange = (e) =>
-				this.toggleSelectAll(e.target.checked);
-			// 取关
-			this.modal.querySelector("#unfollow-btn").onclick = () =>
-				this.unfollowSelected();
-			// 获取粉丝数
-			this.modal.querySelector("#fetch-fans-btn").onclick = () =>
-				this.fetchAllFans();
-			// 刷新列表
-			this.modal.querySelector("#clear-cache-btn").onclick = () =>
-				this.refresh();
-			// 导出按钮
-			this.modal.querySelector("#export-btn").onclick = () =>
-				this.exportFollowList();
-			// 导入按钮
-			this.modal.querySelector("#import-btn").onclick = () =>
-				this.importFromFile(false);
-			// 同步按钮
-			this.modal.querySelector("#sync-btn").onclick = () =>
-				this.importFromFile(true);
-			// 停止按钮
-			this.modal.querySelector("#stop-btn").onclick = () =>
-				this.stopCurrentOperation();
-		}
-		showLoading(message) {
-			const tbody = this.modal?.querySelector("#table-tbody");
-			if (tbody)
-				tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; padding: 40px;">${message}</td></tr>`;
-		}
-		showError(message) {
-			const tbody = this.modal?.querySelector("#table-tbody");
-			if (tbody)
-				tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; padding: 40px; color: #dc3545;">${message}</td></tr>`;
-		}
-		// 显示停止按钮
-		showStopButton() {
-			const stopBtn = this.modal.querySelector("#stop-btn");
-			if (stopBtn) {
-				stopBtn.style.display = "block";
-			}
-		}
-
-		// 隐藏停止按钮
-		hideStopButton() {
-			const stopBtn = this.modal.querySelector("#stop-btn");
-			if (stopBtn) {
-				stopBtn.style.display = "none";
-			}
-		}
-
-		// 停止当前操作
-		stopCurrentOperation() {
-			if (!confirm("确定要停止当前操作吗？已完成的操作不会回滚。")) {
-				return;
-			}
-
-			this.shouldStop = true;
-			const stopBtn = this.modal.querySelector("#stop-btn");
-			if (stopBtn) {
-				stopBtn.textContent = "停止中...";
-				stopBtn.disabled = true;
-			}
-		}
-		// 重置停止状态
-		resetStopState() {
-			this.shouldStop = false;
-			this.currentOperation = null;
-			this.hideStopButton();
-
-			const stopBtn = this.modal.querySelector("#stop-btn");
-			if (stopBtn) {
-				stopBtn.textContent = "强制停止";
-				stopBtn.disabled = false;
-			}
-		}
-		// 检查是否应该停止
-		checkShouldStop() {
-			return this.shouldStop;
-		}
-		filterList() {
-			const keyword = this.modal
-				.querySelector("#filter-input")
-				.value.trim()
-				.toLowerCase();
-			const status = this.modal.querySelector("#filter-status").value;
-			const vip = this.modal.querySelector("#filter-vip").value;
-			const official = this.modal.querySelector("#filter-official").value;
-			const dateStart = this.modal.querySelector("#filter-date-start").value;
-			const dateEnd = this.modal.querySelector("#filter-date-end").value;
-			const fansMin = this.modal.querySelector("#filter-fans-min").value;
-			const fansMax = this.modal.querySelector("#filter-fans-max").value;
-			this.filteredList = this.followList.filter((user) => {
-				// 关键词筛选（昵称和简介）
-				if (keyword) {
-					const nameMatch = user.uname.toLowerCase().includes(keyword);
-					const signMatch =
-						user.sign && user.sign.toLowerCase().includes(keyword);
-					if (!nameMatch && !signMatch) return false;
-				}
-				// 状态筛选
-				if (status) {
-					const isInvalid =
-						user.face.includes("noface.jpg") && user.uname === "账号已注销";
-					if (status === "normal" && isInvalid) return false;
-					if (status === "invalid" && !isInvalid) return false;
-				}
-				// 大会员筛选
-				if (vip) {
-					const hasVip = user.vip && user.vip.vipType > 0;
-					if (vip === "false" && hasVip) return false;
-					if (vip === "annual" && (!hasVip || user.vip.vipType !== 2))
-						return false;
-					if (vip === "monthly" && (!hasVip || user.vip.vipType !== 1))
-						return false;
-				}
-				// 认证状态筛选
-				if (official) {
-					const hasOfficial =
-						user.official_verify && user.official_verify.type >= 0;
-					if (official === "false" && hasOfficial) return false;
-					if (
-						official === "0" &&
-						(!hasOfficial || user.official_verify.type !== 0)
-					)
-						return false;
-					if (
-						official === "1" &&
-						(!hasOfficial || user.official_verify.type !== 1)
-					)
-						return false;
-				}
-				// 日期筛选
-				if ((dateStart || dateEnd) && user.mtime) {
-					const userDate = new Date(user.mtime * 1000)
-						.toISOString()
-						.split("T")[0];
-					if (dateStart && userDate < dateStart) return false;
-					if (dateEnd && userDate > dateEnd) return false;
-				}
-				// 粉丝数筛选
-				if (fansMin || fansMax) {
-					const followerCount =
-						user.follower !== null && user.follower !== undefined
-							? user.follower
-							: -1;
-					// 如果用户粉丝数未获取，跳过筛选（显示所有未获取的用户）
-					if (followerCount === -1) return true;
-					if (fansMin && followerCount < parseInt(fansMin)) return false;
-					if (fansMax && followerCount > parseInt(fansMax)) return false;
-				}
-				return true;
-			});
-			this.renderTable();
-		}
-		renderTable() {
-			const tbody = this.modal.querySelector("#table-tbody");
-			const showCount = this.modal.querySelector("#show-count");
-			const totalCount = this.modal.querySelector("#total-count");
-			tbody.innerHTML = "";
-			this.filteredList.forEach((user) => {
-				const followTime = user.mtime
-					? new Date(user.mtime * 1000).toLocaleDateString()
-					: "未知";
-				const isInvalid =
-					user.face.includes("noface.jpg") && user.uname === "账号已注销";
-				const followerCount =
-					user.follower !== null && user.follower !== undefined
-						? user.follower.toLocaleString()
-						: '<span style="color:#999;">未获取</span>';
-				const officialTitle = ((officialInfo) => {
-					if (!officialInfo || officialInfo.type < 0) return "";
-					const titles = { 0: "个人", 1: "机构" };
-					const typeTitle = titles[officialInfo.type] || "认证";
-					return officialInfo.desc
-						? `${typeTitle}: ${officialInfo.desc}`
-						: typeTitle;
-				})(user.official_verify);
-				const vipType = ((vipInfo) => {
-					if (!vipInfo || vipInfo.vipType === 0) return "";
-					return vipInfo.label?.text || "大会员";
-				})(user.vip);
-				const row = document.createElement("tr");
-				row.innerHTML = `
-                    <td><input type="checkbox" class="row-checkbox" value="${
-											user.mid
-										}" data-name="${user.uname}"></td>
-                    <td><img src="${user.face}" loading="lazy"></td>
-                    <td style="${
-											isInvalid
-												? "color:#999;text-decoration:line-through;"
-												: ""
-										}">${user.uname}</td>
-                    <td>${followerCount}</td>
-                    <td>${followTime}</td>
-                    <td>${user.sign || "-"}</td>
-                    <td>${officialTitle}</td>
-                    <td>${vipType}</td>
-                `;
-				row.onclick = (e) => {
-					if (e.target.type !== "checkbox") {
-						const checkbox = row.querySelector(".row-checkbox");
-						checkbox.checked = !checkbox.checked;
-						row.classList.toggle("selected", checkbox.checked);
-						this.updateSelectedCount();
-					}
-				};
-				row.querySelector(".row-checkbox").onchange = (e) => {
-					row.classList.toggle("selected", e.target.checked);
-					this.updateSelectedCount();
-				};
-				tbody.appendChild(row);
-			});
-			showCount.textContent = this.filteredList.length;
-			totalCount.textContent = this.followList.length;
-			this.updateSelectedCount();
-		}
-		toggleSelectAll(checked) {
-			const checkboxes = this.modal.querySelectorAll(".row-checkbox");
-			checkboxes.forEach((cb) => {
-				cb.checked = checked;
-				cb.closest("tr").classList.toggle("selected", checked);
-			});
-			this.updateSelectedCount();
-		}
-		updateSelectedCount() {
-			const checked = this.modal.querySelectorAll(".row-checkbox:checked");
-			const selectedCount = this.modal.querySelector("#selected-count");
-			const tableSelectAll = this.modal.querySelector("#table-select-all");
-			const total = this.modal.querySelectorAll(".row-checkbox");
-			selectedCount.textContent = checked.length;
-			tableSelectAll.checked =
-				checked.length > 0 && checked.length === total.length;
-		}
-		async unfollowSelected() {
-			const checked = this.modal.querySelectorAll(".row-checkbox:checked");
-			if (!checked.length) {
-				alert(MESSAGES.SELECT_USERS);
-				return;
-			}
-			if (!confirm(MESSAGES.CONFIRM_UNFOLLOW)) return;
-
-			// 设置操作状态
-			this.currentOperation = "unfollow";
-			this.shouldStop = false;
-			this.showStopButton();
-
-			const unfollowBtn = this.modal.querySelector("#unfollow-btn");
-			unfollowBtn.disabled = true;
-			unfollowBtn.textContent = "取关中...";
-
-			const usersToUnfollow = Array.from(checked).map((cb) => ({
-				mid: cb.value,
-				name: cb.getAttribute("data-name"),
-				row: cb.closest("tr"),
-			}));
-
-			let successCount = 0;
-			let failedCount = 0;
-			const successfulMids = [];
-
-			for (let i = 0; i < usersToUnfollow.length; i++) {
-				// 检查是否应该停止
-				if (this.checkShouldStop()) {
-					alert(
-						`操作已停止！\n已完成: ${i}/${usersToUnfollow.length}个用户\n成功: ${successCount}个，失败: ${failedCount}个`
-					);
-					break;
-				}
-
-				const user = usersToUnfollow[i];
-				try {
-					await unfollowUser(user.mid);
-					successCount++;
-					successfulMids.push(user.mid);
-					user.row.style.opacity = "0.5";
-					user.row.style.backgroundColor = "#e8f5e8";
-				} catch (error) {
-					failedCount++;
-					console.error(`取关 ${user.name} 失败:`, error);
-					user.row.style.backgroundColor = "#ffebee";
-				}
-
-				unfollowBtn.textContent = `取关中... ${i + 1}/${
-					usersToUnfollow.length
-				}`;
-
-				if (i < usersToUnfollow.length - 1) {
-					await new Promise((resolve) =>
-						setTimeout(resolve, CONFIG.BATCH_DELAY)
-					);
-				}
-			}
-
-			// 批量更新数据和界面
-			if (successfulMids.length > 0) {
-				this.followList = this.followList.filter(
-					(u) => !successfulMids.includes(u.mid)
-				);
-				this.filteredList = this.filteredList.filter(
-					(u) => !successfulMids.includes(u.mid)
-				);
-				successfulMids.forEach((mid) => cache.removeUserInfo(mid));
-				cache.set(this.followList);
-				this.renderTable();
-			}
-
-			if (!this.checkShouldStop()) {
-				alert(
-					`批量取关完成！\n成功: ${successCount}个，失败: ${failedCount}个`
-				);
-			}
-
-			unfollowBtn.disabled = false;
-			unfollowBtn.textContent = "取关选中用户";
-			this.resetStopState();
-		}
-		sortList(field) {
-			if (this.sortField === field) {
-				this.sortOrder = this.sortOrder === "desc" ? "asc" : "desc";
-			} else {
-				this.sortField = field;
-				this.sortOrder = "desc";
-			}
-			this.filteredList.sort((a, b) => {
-				let valueA, valueB;
-				if (field === "uname") {
-					valueA = a.uname.toLowerCase();
-					valueB = b.uname.toLowerCase();
-				} else if (field === "mtime") {
-					valueA = a.mtime || 0;
-					valueB = b.mtime || 0;
-				} else {
-					valueA = a[field] || 0;
-					valueB = b[field] || 0;
-				}
-				if (this.sortOrder === "asc") {
-					return valueA > valueB ? 1 : valueA < valueB ? -1 : 0;
-				} else {
-					return valueA < valueB ? 1 : valueA > valueB ? -1 : 0;
-				}
-			});
-			// 更新排序标记
-			this.modal.querySelectorAll("th").forEach((header) => {
-				header.classList.remove("sort-asc", "sort-desc");
-			});
-			const sortHeader = this.modal.querySelector(`th[data-sort="${field}"]`);
-			if (sortHeader) sortHeader.classList.add(`sort-${this.sortOrder}`);
-			this.renderTable();
-		}
-
-		// 获取全部粉丝数
-		async fetchAllFans() {
-			if (!confirm("确定要获取所有用户的粉丝数吗？这可能需要一些时间。"))
-				return;
-			const fetchBtn = this.modal.querySelector("#fetch-fans-btn");
-			fetchBtn.disabled = true;
-			fetchBtn.textContent = "获取中...";
-			let processedCount = 0;
-			const totalCount = this.followList.length;
-			for (let i = 0; i < this.followList.length; i++) {
-				const user = this.followList[i];
-				try {
-					const info = await fetchUserInfo(user.mid);
-					if (info.follower >= 0) {
-						user.follower = info.follower;
-						user.following = info.following;
-						this.updateUserRow(user);
-					}
-				} catch (error) {}
-				processedCount++;
-				fetchBtn.textContent = `获取中... ${processedCount}/${totalCount} (${Math.round(
-					(processedCount / totalCount) * 100
-				)}%)`;
-				if (processedCount % 10 === 0) cache.set(this.followList);
-				if (i < this.followList.length - 1)
-					await new Promise((resolve) =>
-						setTimeout(resolve, CONFIG.FANS_API_DELAY)
-					);
-			}
-			cache.set(this.followList);
-			alert(
-				`粉丝数获取完成！\n成功处理: ${processedCount}/${totalCount} 个用户`
-			);
-			fetchBtn.disabled = false;
-			fetchBtn.textContent = "获取全部粉丝数";
-		}
-		// 导出选中用户
-		exportFollowList() {
-			const checked = this.modal.querySelectorAll(".row-checkbox:checked");
-			if (!checked.length) {
-				alert("请先选择要导出的用户");
-				return;
-			}
-
-			try {
-				// 获取选中用户的数据
-				const selectedUsers = Array.from(checked).map((checkbox) => {
-					const mid = checkbox.value;
-					const name = checkbox.getAttribute("data-name");
-					return { mid, name };
-				});
-
-				const exportData = selectedUsers
-					.map((user) => {
-						return `${user.mid},${user.name}`;
-					})
-					.join("\n");
-
-				// 使用数据URL方案
-				const dataUrl =
-					"data:text/plain;charset=utf-8," + encodeURIComponent(exportData);
-				const timestamp = new Date().toISOString().split("T")[0];
-
-				const a = document.createElement("a");
-				a.href = dataUrl;
-				a.download = `bilibili_selected_follows_${timestamp}.txt`;
-				a.style.display = "none";
-
-				document.body.appendChild(a);
-				a.click();
-
-				// 延迟清理
-				setTimeout(() => {
-					document.body.removeChild(a);
-				}, 100);
-
-				alert(`成功导出 ${selectedUsers.length} 个选中用户`);
-			} catch (error) {
-				console.error("导出失败:", error);
-				alert("导出失败: " + error.message);
-			}
-		}
-		// 从文件中导入（update=true：与文件完全同步，支持取关 update=false：只添加新的关注）
-		async importFromFile(update=false) {
-			try {
-				// 1. 选择并读取文件
-				const content = await new Promise((resolve, reject) => {
-					const input = document.createElement("input");
-					input.type = "file";
-					input.accept = ".txt";
-
-					input.onchange = (e) => {
-						const file = e.target.files[0];
-						if (!file) {
-							reject(new Error("未选择文件"));
-							return;
-						}
-
-						const reader = new FileReader();
-						reader.onload = (event) => resolve(event.target.result);
-						reader.onerror = () => reject(new Error("文件读取失败"));
-						reader.readAsText(file);
-					};
-
-					input.click();
-				});
-
-				// 2. 解析文件内容
-				const lines = content.split("\n").filter((line) => line.trim());
-				const fileUsers = new Map();
-
-				for (const line of lines) {
-					const match = line.match(/^(\d+),([^,]*)/);
-					if (match) {
-						const mid = match[1].trim();
-						const name = match[2].trim() || "未知用户";
-						fileUsers.set(mid, { mid, name });
-					}
-				}
-
-				if (fileUsers.size === 0) {
-					alert("未找到有效的用户数据，请确保文件格式为: MID,用户名");
-					return;
-				}
-
-				// 3. 设置操作状态
-				const operationType = update ? "sync" : "import";
-				this.currentOperation = operationType;
-				this.shouldStop = false;
-				this.showStopButton();
-
-				// 4. 分析需要进行的操作
-				const localUsers = new Map(
-					this.followList.map((user) => [user.mid.toString(), user])
-				);
-				const fileMids = new Set(fileUsers.keys());
-
-				const usersToFollow = []; // 需要添加的关注（文件有，本地没有）
-				const usersToUnfollow = []; // 需要取消的关注（本地有，文件没有）- 仅在update=true时处理
-
-				// 找出需要添加的用户（文件有，本地没有）
-				for (const [mid, fileUser] of fileUsers) {
-					if (!localUsers.has(mid)) {
-						usersToFollow.push(fileUser);
-					}
-				}
-
-				// 找出需要删除的用户（本地有，文件没有）- 仅在update=true时处理
-				if (update) {
-					for (const [mid, localUser] of localUsers) {
-						if (!fileMids.has(mid)) {
-							usersToUnfollow.push(localUser);
-						}
-					}
-				}
-
-				// 5. 检查是否有操作需要执行
-				if (usersToFollow.length === 0 && usersToUnfollow.length === 0) {
-					const message = update
-						? "关注列表已与文件完全同步，无需任何操作"
-						: "所有用户已经在关注列表中";
-					alert(message);
-					return;
-				}
-
-				// 6. 显示操作预览
-				let previewMsg = "";
-
-				if (usersToFollow.length > 0) {
-					const followPreview = usersToFollow
-						.slice(0, 3)
-						.map((u) => u.name)
-						.join(", ");
-					previewMsg += `将添加关注: ${followPreview}${
-						usersToFollow.length > 3
-							? `... 等 ${usersToFollow.length} 个用户`
-							: ""
-					}\n`;
-				}
-
-				if (update && usersToUnfollow.length > 0) {
-					const unfollowPreview = usersToUnfollow
-						.slice(0, 3)
-						.map((u) => u.uname)
-						.join(", ");
-					previewMsg += `将取消关注: ${unfollowPreview}${
-						usersToUnfollow.length > 3
-							? `... 等 ${usersToUnfollow.length} 个用户`
-							: ""
-					}\n`;
-				}
-
-				const operationText = update ? "同步" : "导入";
-				const confirmMessage = `${operationText}操作预览：\n\n${previewMsg}\n总计：添加 ${
-					usersToFollow.length
-				} 个${
-					update ? `，删除 ${usersToUnfollow.length} 个` : ""
-				}\n\n确定要执行${operationText}吗？`;
-
-				if (!confirm(confirmMessage)) {
-					return;
-				}
-
-				// 7. 更新按钮状态
-				const button = this.modal.querySelector(`#${operationType}-btn`);
-				if (button) {
-					button.disabled = true;
-					button.textContent = `${operationText}中...`;
-				}
-
-				// 8. 执行批量操作
-				let followSuccess = 0;
-				let followFailed = 0;
-				let unfollowSuccess = 0;
-				let unfollowFailed = 0;
-				const failedOperations = [];
-
-				const totalOperations = usersToFollow.length + usersToUnfollow.length;
-				let completedOperations = 0;
-
-				// 更新进度显示函数
-				const updateProgress = (current, total, stats = {}) => {
-					if (button) {
-						const percent = Math.round((current / total) * 100);
-						let statusText = `${operationText}中... ${current}/${total} (${percent}%)`;
-
-						// 添加统计信息
-						const totalSuccess =
-							(stats.followSuccess || 0) + (stats.unfollowSuccess || 0);
-						const totalFailed =
-							(stats.followFailed || 0) + (stats.unfollowFailed || 0);
-						statusText += ` | 成功:${totalSuccess} 失败:${totalFailed}`;
-
-						button.textContent = statusText;
-					}
-				};
-				// 添加到本地列表函数
-				const addUserToLocalList = (user) => {
-					const newUserObj = {
-						mid: parseInt(user.mid),
-						uname: user.name || user.uname,
-						mtime: Math.floor(Date.now() / 1000),
-						face: "https://static.hdslb.com/images/member/noface.gif",
-						sign: "",
-						official_verify: { type: -1, desc: "" },
-						vip: { vipType: 0 },
-						follower: 0,
-						following: 0,
-					};
-					this.followList.push(newUserObj);
-					cache.set(this.followList);
-					this.filterList();
-				};
-
-				// 从本地列表移除函数
-				const removeUserFromLocalList = (mid) => {
-					this.followList = this.followList.filter(
-						(u) => u.mid.toString() !== mid.toString()
-					);
-					cache.set(this.followList);
-					this.filterList();
-				};
-
-				// 先执行取消关注操作（仅在update=true时）
-				if (update && usersToUnfollow.length > 0) {
-					for (let i = 0; i < usersToUnfollow.length; i++) {
-						if (this.checkShouldStop()) {
-							alert(
-								`${operationText}已停止！\n已完成取消关注: ${i}/${usersToUnfollow.length}个用户\n成功: ${unfollowSuccess}个，失败: ${unfollowFailed}个`
-							);
-							break;
-						}
-
-						const user = usersToUnfollow[i];
-						try {
-							await unfollowUser(user.mid);
-							unfollowSuccess++;
-							removeUserFromLocalList(user.mid);
-						} catch (error) {
-							unfollowFailed++;
-							failedOperations.push(
-								`取消关注失败: ${user.uname} (${user.mid}): ${error.message}`
-							);
-							console.error(`取消关注 ${user.uname} 失败:`, error);
-						}
-
-						completedOperations++;
-						updateProgress(completedOperations, totalOperations, {
-							followSuccess,
-							followFailed,
-							unfollowSuccess,
-							unfollowFailed,
-						});
-
-						if (i < usersToUnfollow.length - 1) {
-							await new Promise((resolve) =>
-								setTimeout(resolve, CONFIG.BATCH_DELAY)
-							);
-						}
-					}
-				}
-
-				// 再执行添加关注操作
-				if (usersToFollow.length > 0) {
-					for (let i = 0; i < usersToFollow.length; i++) {
-						if (this.checkShouldStop()) {
-							alert(
-								`${operationText}已停止！\n已完成添加关注: ${i}/${usersToFollow.length}个用户\n成功: ${followSuccess}个，失败: ${followFailed}个`
-							);
-							break;
-						}
-
-						const user = usersToFollow[i];
-						try {
-							await followUser(user.mid);
-							followSuccess++;
-							addUserToLocalList(user);
-						} catch (error) {
-							followFailed++;
-							failedOperations.push(
-								`添加关注失败: ${user.name} (${user.mid}): ${error.message}`
-							);
-							console.error(`关注 ${user.name} 失败:`, error);
-						}
-
-						completedOperations++;
-						updateProgress(completedOperations, totalOperations, {
-							followSuccess,
-							followFailed,
-							unfollowSuccess,
-							unfollowFailed,
-						});
-
-						if (i < usersToFollow.length - 1) {
-							await new Promise((resolve) =>
-								setTimeout(resolve, CONFIG.BATCH_DELAY)
-							);
-						}
-					}
-				}
-
-				// 9. 显示操作结果
-				let resultMessage = `${operationText}完成！\n`;
-				resultMessage += `添加关注: 成功 ${followSuccess}个, 失败 ${followFailed}个\n`;
-
-				if (update) {
-					resultMessage += `取消关注: 成功 ${unfollowSuccess}个, 失败 ${unfollowFailed}个`;
-				}
-
-				if (failedOperations.length > 0) {
-					resultMessage += `\n\n失败操作:\n${failedOperations
-						.slice(0, 8)
-						.join("\n")}`;
-					if (failedOperations.length > 8) {
-						resultMessage += `\n... 还有 ${failedOperations.length - 8} 个失败`;
-					}
-				}
-
-				alert(resultMessage);
-
-				// 10. 恢复按钮状态
-				if (button) {
-					button.disabled = false;
-					button.textContent = update ? "从文件同步" : "导入关注列表";
-				}
-
-				this.resetStopState();
-			} catch (error) {
-				alert(`操作失败: ${error.message}`);
-				console.error("importFromFile error:", error);
-			}
-		}
-
-		// 批量获取粉丝数（实时后台获取）
-		async fetchBatchUsersFansRealtime(users) {
-			const needFetchUsers = users.filter(
-				(user) => user.follower === null || user.follower === undefined
-			);
-			if (needFetchUsers.length === 0) return;
-			let processedCount = 0;
-			const batchSize = 5;
-			for (
-				let batchIndex = 0;
-				batchIndex < needFetchUsers.length;
-				batchIndex += batchSize
-			) {
-				const batch = needFetchUsers.slice(batchIndex, batchIndex + batchSize);
-				for (const user of batch) {
-					try {
-						const info = await fetchUserInfo(user.mid);
-						user.follower = info.follower >= 0 ? info.follower : 0;
-						user.following = info.following || 0;
-						this.updateUserRow(user);
-					} catch (error) {
-						user.follower = 0;
-						this.updateUserRow(user);
-					}
-					processedCount++;
-					await new Promise((resolve) =>
-						setTimeout(resolve, CONFIG.FANS_API_DELAY)
-					);
-				}
-				cache.set(this.followList);
-				if (batchIndex + batchSize < needFetchUsers.length) {
-					await new Promise((resolve) => setTimeout(resolve, 800));
-				}
-			}
-		}
-		// 更新用户行的粉丝数显示
-		updateUserRow(user) {
-			const tbody = this.modal?.querySelector("#table-tbody");
-			if (!tbody) return;
-			const targetRow = Array.from(tbody.querySelectorAll("tr")).find((row) => {
-				const checkbox = row.querySelector(".row-checkbox");
-				return checkbox && checkbox.value === user.mid;
-			});
-			if (targetRow) {
-				const followerCell = targetRow.children[3];
-				if (followerCell) {
-					followerCell.innerHTML =
-						user.follower !== null && user.follower !== undefined
-							? user.follower.toLocaleString()
-							: '<span style="color:#999;">未获取</span>';
-				}
-			}
-		}
-		// 刷新列表
-		async refresh() {
-			if (!confirm("确定要刷新吗？")) return;
-
-			const clearBtn = this.modal.querySelector("#clear-cache-btn");
-			clearBtn.disabled = true;
-			clearBtn.textContent = "刷新中...";
-
-			cache.clear();
-			const clearedCount = cache.clearUserInfo();
-
-			// 重新加载关注列表
-			this.showLoading("正在重新加载关注列表...");
-
-			try {
-				const list = await this.fetchFollowList();
-				if (list.length > 0) {
-					cache.set(list);
-					this.followList = list;
-					this.filteredList = list;
-					this.renderTable();
-				} else {
-					this.showError(MESSAGES.ERROR_NO_DATA);
-				}
-			} catch (error) {
-				console.error("重新加载失败:", error);
-				this.showError("重新加载失败: " + error.message);
-			} finally {
-				clearBtn.disabled = false;
-				clearBtn.textContent = "刷新列表";
-			}
-		}
-	}
-	// 初始化
-	new SimpleFollowManager();
+                </div>`;
+            document.body.appendChild(el);
+            this.bindEvents(el);
+        }
+
+        // 绑定 DOM 事件
+        bindEvents(root) {
+            const Q = (id) => root.querySelector('#' + id);
+            // 绑定按钮事件
+            Q('bm-btn-toggle-filter').onclick = () => {
+                const panel = Q('bm-filter-panel');
+                panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
+            };
+            Q('bm-btn-toggle-io').onclick = () => {
+                const panel = Q('bm-io-panel');
+                panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
+            };
+            Q('bm-btn-sel-deactivated').onclick = () => {
+                document.querySelectorAll('#bm-list tr').forEach(tr => {
+                    const user = this.state.list.find(u => u.mid == tr.dataset.mid);
+                    if (user && user.uname === '账号已注销') {
+                        this.state.selectedMids.add(user.mid);
+                    }
+                });
+                this.render();
+            };
+            Q('bm-btn-deselect-special').onclick = () => {
+                document.querySelectorAll('#bm-list tr').forEach(tr => {
+                    const user = this.state.list.find(u => u.mid == tr.dataset.mid);
+                    if (user && user.tag?.includes(-10)) {
+                         this.state.selectedMids.delete(user.mid);
+                    }
+                });
+                this.render();
+            };
+            Q('bm-btn-fans').onclick = () => this.act('fans');
+            Q('bm-btn-import').onclick = () => this.act('import');
+            Q('bm-btn-import-json').onclick = () => this.act('import-json');
+            Q('bm-btn-export').onclick = () => this.act('export');
+            Q('bm-btn-export-json').onclick = () => this.act('export-json');
+            Q('bm-btn-follow').onclick = () => this.act('follow');
+            Q('bm-btn-unfollow').onclick = () => this.act('unfollow');
+            Q('bm-btn-close').onclick = () => this.hide();
+            Q('bm-all').onchange = (e) => this.toggleAll(e.target.checked);
+
+            // 即时筛选监听
+            ['bm-k', 'bm-f-val'].forEach(id => Q(id).oninput = () => this.render());
+            ['bm-d-val', 'bm-sel-vip', 'bm-sel-verify'].forEach(id => Q(id).onchange = () => this.render());
+            // 切换筛选模式
+            Q('bm-f-tog').onclick = (e) => {
+                this.state.filterMode.fans = e.target.textContent === '≥' ? '<' : '≥';
+                e.target.textContent = this.state.filterMode.fans;
+                if (Q('bm-f-val').value) this.render();
+            };
+            Q('bm-d-tog').onclick = (e) => {
+                const isBefore = e.target.textContent === '早于';
+                this.state.filterMode.date = isBefore ? '>' : '<='; 
+                e.target.textContent = isBefore ? '晚于' : '早于';
+                if (Q('bm-d-val').value) this.render();
+            };
+            // 绑定排序表头
+            root.querySelectorAll('th[data-sort]').forEach(th => {
+                th.onclick = (e) => this.sort(th.dataset.sort, e);
+            });
+            // 绑定列表点击
+            root.querySelector('#bm-list').onclick = (e) => {
+                const tr = e.target.closest('tr');
+                if (!tr || e.target.tagName === 'A') return;
+                const mid = parseInt(tr.dataset.mid, 10);
+                const chk = tr.querySelector('.bm-chk');
+                if (!chk) return;
+                if (e.target.type !== 'checkbox') chk.checked = !chk.checked;
+                if (chk.checked) this.state.selectedMids.add(mid);
+                else this.state.selectedMids.delete(mid);
+                this.updateSelectionUI();
+            };
+        }
+
+        // 加载关注数据
+        async loadData() {
+            if (!this.uid) return alert('请先登录');
+            this.state.list = [];
+            const status = document.getElementById('bm-status');
+            this.dataLoaded = false;
+            try {
+                let page = 1;
+                while (this.uiRoot && this.uiRoot.style.display !== 'none') {
+                    const res = await this.req(`https://api.bilibili.com/x/relation/followings?vmid=${this.uid}&pn=${page}&ps=50&order=desc&order_type=attention`).catch(()=>null);
+                    const items = res?.data?.list || [];
+                    if (!items.length) break;
+                    this.state.list.push(...items);
+                    status.textContent = `共 ${this.state.list.length} 人`;
+                    if (this.isFilterEmpty() && !this.state.sortCriteria.length) this.appendRows(items);
+                    if (items.length < 50) break;
+                    page++;
+                    await new Promise(r => setTimeout(r, 200));
+                }
+                if (!this.isFilterEmpty() || this.state.sortCriteria.length) this.render();
+                else this.updateSelectionUI();
+                this.dataLoaded = true;
+            } catch (e) {
+                console.error(e);
+                status.textContent = '加载出错';
+            }
+        }
+        
+        // 检查筛选条件
+        isFilterEmpty() {
+            const Q = (id) => document.getElementById(id);
+            if (!Q('bm-k')) return true;
+            return !Q('bm-k').value && !Q('bm-f-val').value && !Q('bm-d-val').value && !Q('bm-sel-verify').value && !Q('bm-sel-vip').value;
+        }
+
+        // 渲染重绘表格
+        render() {
+            const tbody = document.getElementById('bm-list');
+            if(!tbody) return;
+            tbody.innerHTML = '';
+            // 获取控件值
+            const key = document.getElementById('bm-k').value.toLowerCase();
+            const fansVal = parseInt(document.getElementById('bm-f-val').value);
+            const dateStr = document.getElementById('bm-d-val').value;
+            let dateTs = dateStr ? new Date(dateStr).getTime() / 1000 : 0;
+            const verifyFilter = document.getElementById('bm-sel-verify').value;
+            const vipFilter = document.getElementById('bm-sel-vip').value;
+            // 筛选
+            let view = this.state.list.filter(u => {
+                // 关键词筛选
+                if (key && !u.uname.toLowerCase().includes(key) && !String(u.mid).includes(key) && !(u.sign||'').toLowerCase().includes(key)) return false;
+                // 粉丝数筛选
+                if (!isNaN(fansVal)) {
+                    if (this.state.filterMode.fans === '>=' && (u.follower || 0) < fansVal) return false;
+                    if (this.state.filterMode.fans === '<' && (u.follower || 0) >= fansVal) return false;
+                }
+                // 关注日期筛选
+                if (dateTs && u.mtime) {
+                    if (this.state.filterMode.date === '<=' && u.mtime > dateTs) return false;
+                    if (this.state.filterMode.date === '>' && u.mtime < dateTs) return false;
+                }
+                // 认证类型筛选
+                if (verifyFilter !== "") {
+                    const type = u.official_verify?.type ?? -1;
+                    if (String(type) !== verifyFilter && !(verifyFilter === "1" && type > 1)) return false;
+                }
+                // 会员类型筛选
+                if (vipFilter !== "") {
+                    const vt = u.vip?.vipStatus === 1 ? (u.vip.vipType) : 0;
+                    if (String(vt) !== vipFilter) return false;
+                }
+                return true;
+            });
+            // 复合排序
+            if (this.state.sortCriteria.length > 0) {
+                view.sort((a, b) => {
+                    for (const { key, desc } of this.state.sortCriteria) {
+                        const d = desc ? -1 : 1;
+                        let vA, vB;
+                        switch(key) {
+                            case 'uname': return a.uname.localeCompare(b.uname, 'zh') * d;
+                            case 'follower': vA = a.follower||0; vB = b.follower||0; break;
+                            case 'mtime': vA = a.mtime||0; vB = b.mtime||0; break;
+                            case 'verify': vA = a.official_verify?.type ?? -1; vB = b.official_verify?.type ?? -1; break;
+                            case 'vip': vA = a.vip?.vipStatus === 1 ? a.vip.vipType : 0; vB = b.vip?.vipStatus === 1 ? b.vip.vipType : 0; break;
+                            default: continue;
+                        }
+                        if (vA > vB) return d;
+                        if (vA < vB) return -d;
+                    }
+                    return 0;
+                });
+            }
+            // 渲染表格
+            this.appendRows(view);
+        }
+
+        // 添加表格行
+        appendRows(items) {
+            const tbody = document.getElementById('bm-list');
+            if (!tbody) return;
+            const frag = document.createDocumentFragment();
+            items.forEach(u => {
+                const tr = document.createElement('tr');
+                tr.dataset.mid = u.mid;
+                const isChecked = this.state.selectedMids.has(u.mid);
+                const isSpecial = u.tag?.includes(-10);
+                if (isChecked) tr.classList.add('sel');
+                if (u.isImport) tr.classList.add('new-import');
+                tr.title = `UID: ${u.mid}`;
+                
+                const dateStr = u.mtime ? new Date(u.mtime * 1000).toISOString().split('T')[0] : 'N/A';
+                const fans = u.follower === undefined ? '-' : u.follower.toLocaleString();
+                const face = u.face || 'https://i0.hdslb.com/bfs/face/member/noface.jpg';
+                let vipText = '无', vipClass = 'tag-none';
+                if (u.vip?.vipStatus === 1) {
+                    vipText = u.vip.vipType === 2 ? '年度' : '月度';
+                    vipClass = 'tag-vip';
+                }
+                const offType = u.official_verify?.type;
+                const offDesc = u.official_verify?.desc || '';
+                let offHtml = `<span class="bm-tag tag-none" title="无">无</span>`;
+                if (offType === 0) offHtml = `<span class="bm-tag tag-per" title="${offDesc}">个人</span>`;
+                else if (offType >= 1) offHtml = `<span class="bm-tag tag-off" title="${offDesc}">官方</span>`;
+                
+                tr.innerHTML = `
+                    <td><input type="checkbox" class="bm-chk" ${isChecked ? 'checked' : ''}></td>
+                    <td>
+                        <div class="bm-user-row">
+                            <a href="//space.bilibili.com/${u.mid}" target="_blank"><img src="${face.replace('http:', '')}" class="bm-face" loading="lazy"></a>
+                            <div class="bm-info">
+                                <a href="//space.bilibili.com/${u.mid}" target="_blank" class="bm-name ${isSpecial ? 'special' : ''}" title="${u.uname}">${u.uname}</a>
+                                <span class="bm-sign" title="${u.sign||''}">${u.sign || '...'}</span>
+                            </div>
+                        </div>
+                    </td>
+                    <td>${fans}</td>
+                    <td style="color:var(--b-text-2)">${dateStr}</td>
+                    <td><span class="bm-tag ${vipClass}">${vipText}</span></td>
+                    <td>${offHtml}</td>`;
+                frag.appendChild(tr);
+            });
+            tbody.appendChild(frag);
+            this.updateSelectionUI();
+        }
+
+        // 排序
+        sort(key, event) {
+            const criteria = this.state.sortCriteria;
+            const index = criteria.findIndex(c => c.key === key);
+            // 复合排序
+            if (event.shiftKey) {
+                if (index > -1) {
+                    criteria[index].desc = !criteria[index].desc;
+                } else {
+                    criteria.push({ key, desc: true });
+                }
+            } else {
+                if (index > -1 && criteria.length === 1) {
+                    criteria[0].desc = !criteria[0].desc;
+                } else {
+                    this.state.sortCriteria = [{ key, desc: true }];
+                }
+            }
+            // 更新排序
+            document.querySelectorAll('.bm-table th[data-sort]').forEach(th => {
+                const sortKey = th.dataset.sort;
+                const crit = this.state.sortCriteria.find(c => c.key === sortKey);
+                th.classList.remove('sorting');
+                th.innerHTML = th.innerHTML.replace(/ [↑↓](<span.*)?/, ' ↕');
+                if (crit) {
+                    const orderIndex = this.state.sortCriteria.indexOf(crit) + 1;
+                    const arrow = crit.desc ? '↓' : '↑';
+                    const orderBadge = this.state.sortCriteria.length > 1 ? `<span class="sort-order">${orderIndex}</span>` : '';
+                    th.classList.add('sorting');
+                    th.innerHTML = th.innerHTML.replace(' ↕', ` ${arrow}${orderBadge}`);
+                }
+            });
+            this.render();
+        }
+
+        // 切换全选
+        toggleAll(checked) {
+            document.querySelectorAll('#bm-list .bm-chk').forEach(c => {
+                const mid = parseInt(c.closest('tr').dataset.mid, 10);
+                if (checked) {
+                    this.state.selectedMids.add(mid);
+                } else {
+                    this.state.selectedMids.delete(mid);
+                }
+                c.checked = checked;
+            });
+            this.updateSelectionUI();
+        }
+
+        // 更新 UI
+        updateSelectionUI() {
+            if (!this.uiRoot) return;
+            document.querySelectorAll('#bm-list tr').forEach(tr => {
+                const mid = parseInt(tr.dataset.mid, 10);
+                tr.classList.toggle('sel', this.state.selectedMids.has(mid));
+            });
+
+            const hasSelection = this.state.selectedMids.size > 0;
+            const hasImport = !!document.querySelector('.new-import');
+            const followBtn = document.getElementById('bm-btn-follow');
+
+            document.getElementById('bm-btn-unfollow').disabled = !hasSelection;
+
+            if (followBtn) {
+                followBtn.style.display = hasImport ? 'inline-block' : 'none';
+                followBtn.disabled = !hasSelection;
+            }
+            
+            const el = document.getElementById('bm-status');
+            const totNum = document.querySelectorAll('#bm-list tr').length;
+            const selNum = this.state.selectedMids.size;
+
+            if (selNum > 0) {
+                 el.innerHTML = `已选 <b style="color:var(--b-blue)">${selNum}</b> / 共 ${totNum} 人`;
+            } else {
+                 el.textContent = `共 ${totNum} 人`;
+            }
+        }
+        
+        // 操作入口
+        async act(type) {
+            if (this.state.running) return;
+            // 获取选中用户
+            let targets = Array.from(this.state.selectedMids)
+                .map(mid => this.state.list.find(u => u.mid === mid))
+                .filter(u => u);
+
+            // 导出 CSV
+            if (type === 'export') {
+                const list = targets.length ? targets : this.state.list;
+                const csv = '\uFEFFUID,昵称,粉丝数,关注时间,会员,认证\n' + list.map(u => 
+                    [u.mid, `"${u.uname}"`, u.follower||0, u.mtime?new Date(u.mtime*1000).toISOString().split('T')[0]:'-', 
+                    u.vip?.vipStatus === 1 ? (u.vip.vipType === 2 ? '年度大会员' : '月度大会员') : '无', `"${u.official_verify?.desc || ''}"`]
+                    .join(',')
+                ).join('\n');
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+                a.download = `B站关注列表_${new Date().toISOString().slice(0,10)}.csv`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+                return;
+            }
+            // 导出 JSON
+            if (type === 'export-json') {
+                const list = targets.length ? targets : this.state.list;
+                const json = JSON.stringify(list, null, 2);
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(new Blob([json], {type:'application/json'}));
+                a.download = `B站关注列表_${new Date().toISOString().slice(0,10)}.json`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+                return;
+            }
+            // 导入 CSV
+            if (type === 'import') {
+                const input = document.createElement('input'); input.type='file'; input.accept = ".csv,.txt";
+                input.onchange = e => {
+                    const reader = new FileReader();
+                    reader.onload = evt => {
+                        const mids = [...new Set(evt.target.result.match(/\d+/g))].filter(m => !this.state.list.some(u => u.mid == m));
+                        if(!mids.length) return alert('未发现新增用户');
+                        const newItems = mids.map(m => ({ mid: parseInt(m, 10), uname: '待关注', sign: `UID: ${m}`, mtime: 0, isImport: true }));
+                        this.state.list.unshift(...newItems);
+                        this.render();
+                        setTimeout(() => {
+                            newItems.forEach(item => this.state.selectedMids.add(item.mid));
+                            this.render();
+                        }, 100);
+                        alert(`已导入 ${mids.length} 位用户，已自动选中以便关注。`);
+                    };
+                    reader.readAsText(e.target.files[0]);
+                };
+                input.click();
+                return;
+            }
+            // 导入 JSON
+            if (type === 'import-json') {
+                const input = document.createElement('input'); input.type='file'; input.accept = ".json";
+                input.onchange = e => {
+                    const reader = new FileReader();
+                    reader.onload = evt => {
+                        try {
+                            const importedData = JSON.parse(evt.target.result);
+                            if (!Array.isArray(importedData)) {
+                                return alert('JSON 文件格式错误');
+                            }
+                            const newItems = importedData.filter(item => 
+                                item.mid && !this.state.list.some(u => u.mid == item.mid)
+                            );
+                            if (!newItems.length) return alert('未发现新增用户');
+
+                            newItems.forEach(item => {
+                                item.isImport = true;
+                                item.uname = item.uname || '待关注';
+                                item.sign = item.sign || `UID: ${item.mid}`;
+                            });
+
+                            this.state.list.unshift(...newItems);
+                            this.render();
+                            setTimeout(() => {
+                                newItems.forEach(item => this.state.selectedMids.add(item.mid));
+                                this.render();
+                            }, 100);
+                            alert(`已导入 ${newItems.length} 位用户，已自动选中以便关注。`);
+                        } catch(err) {
+                            console.error("JSON Parse Error:", err);
+                            alert('导入失败');
+                        }
+                    };
+                    reader.readAsText(e.target.files[0]);
+                };
+                input.click();
+                return;
+            }
+            // 其他
+            if (!targets.length) {
+                 if (type === 'fans') {
+                     const visibleMids = Array.from(document.querySelectorAll('#bm-list tr')).map(tr => tr.dataset.mid);
+                     targets = this.state.list.filter(u => visibleMids.includes(String(u.mid)));
+                     if(!targets.length || !confirm(`是否更新 ${targets.length} 人的粉丝数？`)) return;
+                 } else {
+                     return alert('请先勾选需要操作的用户');
+                 }
+            } else if (type !== 'fans') {
+                if (!confirm(`确定要${type==='follow'?'批量关注':'批量取关'} ${targets.length} 位用户吗？`)) return;
+            }
+            // 执行任务
+            await this.runTask(targets, type);
+        }
+
+        // 执行任务
+        async runTask(items, type) {
+            this.state.running = true;
+            const status = document.getElementById('bm-status');
+            const csrf = document.cookie.match(/bili_jct=([^;]+)/)?.[1];
+            let ok = 0, fail = 0;
+            for (let i = 0; i < items.length; i++) {
+                if(!this.uiRoot || this.uiRoot.style.display === 'none') { this.state.running=false; return; }
+                const u = items[i];
+                const actMap = { 'follow': 1, 'unfollow': 2 };
+                const actName = type === 'fans' ? '查询' : (actMap[type] === 1 ? '关注' : '取关');
+                status.textContent = `[${i+1}/${items.length}] ${actName}: ${u.uname}`;
+                try {
+                    if (type === 'fans') {
+                        const res = await this.req(`https://api.bilibili.com/x/relation/stat?vmid=${u.mid}`);
+                        u.follower = res.data.follower;
+                        const cell = document.querySelector(`tr[data-mid="${u.mid}"]`)?.cells[2];
+                        if(cell) cell.textContent = u.follower.toLocaleString();
+                        ok++;
+                    } else {
+                        const actCode = actMap[type];
+                        await this.req('https://api.bilibili.com/x/relation/modify', 'POST', `fid=${u.mid}&act=${actCode}&re_src=11&csrf=${csrf}`);
+                        if (type === 'unfollow') {
+                            this.state.list = this.state.list.filter(x => x.mid != u.mid);
+                            this.state.selectedMids.delete(u.mid);
+                        } else if (type === 'follow') {
+                            u.isImport = false;
+                        }
+                        ok++;
+                    }
+                } catch(e) { console.error(e); fail++; }
+                
+                await new Promise(r => setTimeout(r, 200));
+            }
+            this.state.running = false;
+            status.textContent = `任务完成: 成功 ${ok}, 失败 ${fail}`;
+            this.render();
+        }
+    }
+    // 启动
+    new App();
 })();
