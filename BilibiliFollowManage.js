@@ -779,28 +779,38 @@
             status.textContent = `已刷新 ${ok} 人`;
         }
 
-        // 刷新动态
-        async runTaskDynamic(items) {
-            const status = document.getElementById('bm-status'); let ok=0;
-            for (let i = 0; i < items.length; i++) {
-                if(this.uiRoot.style.display === 'none') break;
-                const u = items[i]; status.textContent = `查询 (${i+1}/${items.length}): ${u.uname}`;
-                try {
-                    const res = await this.req(`https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid=${u.mid}&offset=`);
-                    const items_list = res.data?.items || [];
-                    let ts = 0;
-                    if (items_list.length > 0 && items_list[0]?.modules?.module_author?.pub_ts) {
-                        ts = items_list[0].modules.module_author.pub_ts;
-                    }
-                    u.last_dynamic_ts = ts;
-                    const cell = document.querySelector(`tr[data-mid="${u.mid}"]`)?.cells[3]; // 注意列索引变化
-                    if(cell) cell.textContent = u.last_dynamic_ts ? new Date(u.last_dynamic_ts * 1000).toISOString().split('T')[0] : '-';
-                    ok++;
-                } catch(e) {}
-                await new Promise(r => setTimeout(r, 300));
+    // 刷新动态
+    async runTaskDynamic(items) {
+        const status = document.getElementById('bm-status'); 
+        let ok = 0;
+        
+        for (let i = 0; i < items.length; i++) {
+            if (this.uiRoot.style.display === 'none') break;
+            
+            const u = items[i];
+            status.textContent = `查询 (${i+1}/${items.length}): ${u.uname}`;
+            
+            try {
+                const res = await this.req(`https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid=${u.mid}&offset=`);
+                const items_list = res.data?.items || [];
+    
+                const targetItem = items_list.find(item => item.modules?.module_tag?.text !== '置顶') || items_list[0];
+                u.last_dynamic_ts = targetItem?.modules?.module_author?.pub_ts || 0;
+                
+                const cell = document.querySelector(`tr[data-mid="${u.mid}"]`)?.cells[3];
+                if (cell) {
+                    cell.textContent = u.last_dynamic_ts ? 
+                        new Date(u.last_dynamic_ts * 1000).toISOString().split('T')[0] : '-';
+                }
+                ok++;
+            } catch (e) {
             }
-            status.textContent = `已刷新 ${ok} 人`;
+            
+            await new Promise(r => setTimeout(r, 300));
         }
+        
+        status.textContent = `已刷新 ${ok} 人`;
+    }
 
         // 修改关注
         async runTaskModify(items, act) {
