@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         BiliBili 关注管理
 // @namespace    https://github.com/YisRime/BilibiliFollowManage
-// @version      6.1
-// @description  高效管理关注与分组列表，可按粉丝数/投稿时间/动态时间排序，并支持筛选会员/认证/老粉/互关等状态，然后可进行批量取关/关注/转移分组等操作，也支持导入导出数据，方便备份和迁移。
+// @version      7.0
+// @description  管理关注，可按粉丝数或投稿/动态时间排序，并支持筛选会员/认证/老粉/互关等状态，以进行批量取关/关注等操作。支持操作分组与导入导出。
 // @author       苡淞
 // @match        https://space.bilibili.com/*/relation/follow*
 // @match        https://space.bilibili.com/*/fans/follow*
@@ -32,8 +32,11 @@
         .bm-btn-entry:hover{transform:translateY(-2px);background:var(--b-blue-hover)}
         .bm-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;display:flex;justify-content:center;align-items:center;backdrop-filter:blur(2px)}
         .bm-win{width:95vw;max-width:1400px;height:90vh;background:var(--b-bg-body);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.08);font-family:-apple-system,sans-serif;color:#18191c}
-        .bm-header{flex-shrink:0;background:var(--b-bg-body);border-bottom:1px solid var(--b-border);display:flex;flex-direction:column;padding:16px 20px;gap:12px;position:relative}
-        .bm-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+        .bm-header{flex-shrink:0;background:var(--b-bg-body);border-bottom:1px solid var(--b-border);display:flex;flex-direction:column;padding:12px 20px;gap:10px;position:relative}
+        .bm-top-bar{display:flex;justify-content:space-between;align-items:center;gap:12px;}
+        .bm-left, .bm-right{display:flex;align-items:center;gap:8px;}
+        .bm-center{flex:1;display:flex;justify-content:center;align-items:center;overflow:hidden;white-space:nowrap;}
+        .bm-filter-bar{display:none;background:#f9f9f9;padding:8px 12px;border-radius:var(--b-radius);gap:12px;flex-wrap:wrap;align-items:center;border:1px solid var(--b-border);}
         .bm-input,.bm-select{height:32px;box-sizing:border-box;border:1px solid var(--b-border);border-radius:var(--b-radius);padding:0 10px;font-size:13px;color:#18191c;outline:none;transition:border .2s;background:var(--b-bg-body)}
         .bm-input:focus,.bm-select:focus{border-color:var(--b-blue);z-index:2}
         .bm-select{min-width:70px;cursor:pointer}
@@ -48,12 +51,7 @@
         .bm-btn{height:32px;padding:0 14px;border-radius:var(--b-radius);border:1px solid var(--b-border);background:var(--b-bg-body);color:#18191c;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:all .2s;white-space:nowrap;font-weight:500}
         .bm-btn:hover:not(:disabled){border-color:var(--b-blue);color:var(--b-blue);background:var(--b-bg-hover)}
         .bm-btn:disabled{opacity:.6;cursor:not-allowed;background:var(--b-bg-gray);color:#9499a0}
-        .bm-btn.primary{background:var(--b-blue);color:#fff;border-color:var(--b-blue)}
-        .bm-btn.primary:hover:not(:disabled){background:var(--b-blue-hover);border-color:var(--b-blue-hover)}
-        .bm-btn.danger{color:var(--b-red);border-color:#ffccc7;background:#fff1f0}
-        .bm-btn.danger:hover:not(:disabled){border-color:var(--b-red);background:var(--b-red);color:#fff}
         .bm-btn.processing{border-color:var(--b-orange);color:var(--b-orange);background:#fff7e6}
-        .bm-divider{width:1px;height:20px;background:var(--b-border);margin:0 4px}
         .bm-v-divider{width:1px;height:24px;background:var(--b-border);margin:0 4px}
         .bm-filter-area{display:flex;flex-wrap:wrap;gap:8px;flex:1;align-items:center}
         .bm-filter-tag{display:flex;align-items:center;gap:6px;background:#e6f7ff;border:1px solid #91d5ff;color:#096dd9;padding:0 8px;height:24px;border-radius:4px;font-size:12px;animation:fadeIn .2s ease-out}
@@ -62,7 +60,7 @@
         @keyframes fadeIn{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}
         .bm-status-text{color:#61666d;font-size:13px;white-space:nowrap;display:flex;align-items:center}
         .bm-status-num{font-weight:700;color:#18191c;margin:0 4px;font-size:14px}
-        .bm-close{font-size:20px;color:#9499a0;cursor:pointer;transition:color .2s;position:absolute;top:16px;right:20px;z-index:100}
+        .bm-close{font-size:20px;color:#9499a0;cursor:pointer;transition:color .2s;margin-left:8px}
         .bm-close:hover{color:#18191c}
         .bm-body{flex:1;overflow-y:auto;scrollbar-width:thin;background:var(--b-bg-gray)}
         .bm-table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed;background:var(--b-bg-body)}
@@ -91,10 +89,92 @@
                 inputState: { fans: '>=', date: '<=', dateType: 'mtime' },
                 conditions: [], selectedMids: new Set()
             };
+            this.db = null;
             this.uid = window.location.pathname.match(/space\/(\d+)/)?.[1] || document.cookie.match(/DedeUserID=(\d+)/)?.[1];
+            this.renderTimer = null;
             const btn = document.createElement('button');
             btn.className = 'bm-btn-entry'; btn.textContent = '关注管理'; btn.onclick = () => this.show();
             document.body.appendChild(btn);
+            this.initDB();
+        }
+
+        initDB() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open('BiliFollowManageDB', 1);
+                req.onupgradeneeded = e => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('follows')) {
+                        db.createObjectStore('follows', { keyPath: 'uid' });
+                    }
+                };
+                req.onsuccess = e => { this.db = e.target.result; resolve(); };
+                req.onerror = () => reject();
+            });
+        }
+
+        async loadFromDB() {
+            if (!this.db) await this.initDB();
+            return new Promise(resolve => {
+                const tx = this.db.transaction('follows', 'readonly');
+                const req = tx.objectStore('follows').getAll();
+                req.onsuccess = () => {
+                    if (req.result && req.result.length) {
+                        this.state.list = req.result;
+                        this.render();
+                        this.updateStatus();
+                    }
+                    resolve();
+                };
+                req.onerror = () => resolve();
+            });
+        }
+
+        async saveToDB() {
+            if (!this.db) await this.initDB();
+            const btn = document.getElementById('bm-btn-save');
+            if(btn) { btn.textContent = '存储中...'; btn.disabled = true; }
+            return new Promise(resolve => {
+                const tx = this.db.transaction('follows', 'readwrite');
+                const store = tx.objectStore('follows');
+                store.clear().onsuccess = () => {
+                    if (this.state.list.length === 0) {
+                        if(btn) { btn.textContent = '存储'; btn.disabled = false; }
+                        return resolve();
+                    }
+                    this.state.list.forEach(item => store.put(item));
+                    tx.oncomplete = () => {
+                        if(btn) { btn.textContent = '存储成功'; setTimeout(() => btn.textContent = '存储', 2000); btn.disabled = false; }
+                        resolve();
+                    };
+                };
+            });
+        }
+
+        transform(u) {
+            if (u.uid && u.mutual !== undefined) return u;
+            const vipType = u.vip?.vipType;
+            let vipStr = "";
+            if (u.vip?.vipStatus === 1) {
+                const t = u.vip.label?.text || "";
+                vipStr = t.includes("百年") ? "百年" : (t.includes("十年") ? "十年" : (vipType === 2 ? "年度" : "月度"));
+            }
+            return {
+                uid: u.mid,
+                name: u.uname,
+                face: (u.face||'').replace('http:', ''),
+                sign: u.sign || '',
+                fans: u.follower || 0,
+                followTime: u.mtime || 0,
+                videoTime: u.last_video_ts || 0,
+                dynamicTime: u.last_dynamic_ts || 0,
+                groups: u.tag || [],
+                mutual: u.attribute === 6,
+                special: u.special === 1,
+                contract: u.contract_info?.is_contract || false,
+                org: u.official_verify?.type === 1,
+                desc: u.official_verify?.desc || '',
+                vip: vipStr
+            };
         }
 
         req(url, method = 'GET', data = null) {
@@ -126,10 +206,31 @@
             el.innerHTML = `
                 <div class="bm-win">
                     <div class="bm-header">
-                        <div class="bm-close" id="bm-btn-close">✕</div>
-                        <div class="bm-row">
-                            <input id="bm-k" class="bm-input" placeholder="搜索..." style="width:240px">
-                            <div class="bm-v-divider"></div>
+                        <div class="bm-top-bar">
+                            <div class="bm-left">
+                                <input id="bm-k" class="bm-input" placeholder="搜索..." style="width:160px">
+                                <button class="bm-btn" id="bm-btn-filter-toggle">筛选</button>
+                                <select id="bm-sel-target-group" class="bm-select"><option value="">目标分组</option></select>
+                                <button class="bm-btn" id="bm-btn-group-add">添加</button>
+                                <button class="bm-btn" id="bm-btn-group-copy">复制</button>
+                                <button class="bm-btn" id="bm-btn-group-move">移动</button>
+                            </div>
+                            <div class="bm-center">
+                                <div class="bm-status-text" id="bm-status">加载中...</div>
+                            </div>
+                            <div class="bm-right">
+                                <button class="bm-btn" id="bm-btn-import">导入</button>
+                                <button class="bm-btn" id="bm-btn-export">导出</button>
+                                <div class="bm-v-divider"></div>
+                                <button class="bm-btn" id="bm-btn-fetch" title="获取粉丝、投稿、动态">获取信息</button>
+                                <button class="bm-btn" id="bm-btn-save">存储</button>
+                                <div class="bm-v-divider"></div>
+                                <button class="bm-btn" id="bm-btn-unfollow" disabled>取关</button>
+                                <button class="bm-btn" id="bm-btn-follow" disabled>关注</button>
+                                <div class="bm-close" id="bm-btn-close">✕</div>
+                            </div>
+                        </div>
+                        <div class="bm-filter-bar" id="bm-filter-row">
                             <div class="bm-group">
                                 <input type="number" id="bm-f-val" class="bm-input" placeholder="粉丝数" style="width:80px">
                                 <div class="bm-toggle" id="bm-f-tog">≥</div>
@@ -145,22 +246,6 @@
                             <select id="bm-sel-verify" class="bm-select"><option value="">认证</option><option value="1">组织</option><option value="0">个人</option><option value="-1">无</option></select>
                             <select id="bm-sel-status" class="bm-select"><option value="">状态</option><option value="mutual">互相关注</option><option value="special">特别关注</option><option value="contract">原始粉丝</option><option value="deactivated">账号注销</option></select>
                             <select id="bm-sel-group" class="bm-select"><option value="">分组</option><option value="-10">特别关注</option><option value="0">默认分组</option></select>
-                            <div class="bm-v-divider"></div>
-                            <button class="bm-btn" id="bm-btn-fetch" title="获取粉丝、投稿、动态">获取信息</button>
-                            <button class="bm-btn danger" id="bm-btn-unfollow" disabled>取关</button>
-                            <button class="bm-btn primary" id="bm-btn-follow" disabled>关注</button>
-                        </div>
-                        <div class="bm-row">
-                            <select id="bm-sel-target-group" class="bm-select"><option value="">目标分组</option></select>
-                            <button class="bm-btn" id="bm-btn-group-add">添加</button>
-                            <button class="bm-btn" id="bm-btn-group-copy">复制</button>
-                            <button class="bm-btn" id="bm-btn-group-move">移动</button>
-                            <div class="bm-v-divider"></div>
-                            <select id="bm-io-fmt" class="bm-select" style="min-width:60px"><option value="json" selected>JSON</option><option value="csv">CSV</option></select>
-                            <button class="bm-btn" id="bm-btn-import">导入</button>
-                            <button class="bm-btn" id="bm-btn-export">导出</button>
-                            <div class="bm-v-divider"></div>
-                            <div class="bm-status-text" id="bm-status">加载中...</div>
                             <div class="bm-filter-area" id="bm-conditions" style="display:none;"></div>
                         </div>
                     </div>
@@ -183,19 +268,21 @@
             Q('bm-btn-fetch').onclick = () => this.act('fetch');
             Q('bm-btn-import').onclick = () => this.act('import');
             Q('bm-btn-export').onclick = () => this.act('export');
-            Q('bm-k').oninput = () => this.render();
-            Q('bm-f-tog').onclick = (e) => {
-                if (e.target.textContent === '≥') {
-                    e.target.textContent = '<';
-                    this.state.inputState.fans = '<';
-                } else {
-                    e.target.textContent = '≥';
-                    this.state.inputState.fans = '>=';
-                }
+            Q('bm-btn-save').onclick = () => this.saveToDB();
+            Q('bm-btn-filter-toggle').onclick = () => {
+                const r = Q('bm-filter-row'); r.style.display = r.style.display === 'flex' ? 'none' : 'flex';
             };
-            Q('bm-d-tog').onclick = (e) => { 
-                const isBefore = e.target.textContent === '早于'; 
-                this.state.inputState.date = isBefore ? '>' : '<='; e.target.textContent = isBefore ? '晚于' : '早于'; 
+            let debounceTimer;
+            Q('bm-k').oninput = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(() => this.render(), 300); };
+
+            Q('bm-f-tog').onclick = (e) => {
+                const op = e.target.textContent === '≥' ? '<' : '>=';
+                e.target.textContent = op === '>=' ? '≥' : '<';
+                this.state.inputState.fans = op;
+            };
+            Q('bm-d-tog').onclick = (e) => {
+                const isBefore = e.target.textContent === '早于';
+                this.state.inputState.date = isBefore ? '>' : '<='; e.target.textContent = isBefore ? '晚于' : '早于';
             };
             Q('bm-d-type').onclick = (e) => {
                 const types = { 'mtime': '关注', 'last_video_ts': '投稿', 'last_dynamic_ts': '动态' };
@@ -250,7 +337,14 @@
             });
         }
 
-        show() { if (!this.uiRoot) this.initUI(); this.uiRoot.style.display = 'flex'; if (!this.dataLoaded) this.loadData(); }
+        show() {
+            if (!this.uiRoot) this.initUI();
+            this.uiRoot.style.display = 'flex';
+            this.loadGroups().then(() => {
+                this.loadFromDB();
+            });
+            if (!this.dataLoaded && this.state.list.length === 0) this.loadData();
+        }
         hide() { if (this.uiRoot) this.uiRoot.style.display = 'none'; }
 
         async loadGroups() {
@@ -271,8 +365,6 @@
 
         async loadData() {
             if (!this.uid) return alert('请先登录');
-            await this.loadGroups();
-            this.state.list = [];
             const st = document.getElementById('bm-status');
             try {
                 let page = 1;
@@ -280,45 +372,52 @@
                     const res = await this.req(`https://api.bilibili.com/x/relation/followings?vmid=${this.uid}&pn=${page}&ps=50&order=desc&order_type=attention`).catch(()=>null);
                     const items = res?.data?.list || [];
                     if (!items.length) break;
-                    this.state.list.push(...items);
+                    items.forEach(raw => {
+                        const flat = this.transform(raw);
+                        const idx = this.state.list.findIndex(x => x.uid === flat.uid);
+                        if (idx > -1) this.state.list[idx] = { ...this.state.list[idx], ...flat };
+                        else this.state.list.push(flat);
+                    });
                     st.innerHTML = `读取中... <span class="bm-status-num">${this.state.list.length}</span> / ${res.data.total}`;
-                    if (this.isFilterEmpty() && this.state.sortOrder === 0) this.appendRows(items);
                     if (items.length < 50) break;
-                    page++; await new Promise(r => setTimeout(r, 200));
+                    page++; 
+                    if(page % 5 === 0) await new Promise(r => setTimeout(r, 100));
                 }
-                this.dataLoaded = true; this.render();
-            } catch (e) { st.textContent = '加载关注失败'; }
+                this.dataLoaded = true; 
+                this.render();
+                this.updateStatus();
+            } catch (e) { st.textContent = '加载关注失败'; console.error(e); }
         }
 
-        isFilterEmpty() { return !document.getElementById('bm-k').value && !this.state.conditions.length; }
+        updateStatus() {
+            const st = document.getElementById('bm-status');
+            if (st) st.innerHTML = `共 <span class="bm-status-num">${this.state.list.length}</span> 人`;
+        }
 
         render() {
             const tbody = document.getElementById('bm-list'); if(!tbody) return;
             tbody.innerHTML = '';
-            const key = document.getElementById('bm-k').value.toLowerCase(), conds = this.state.conditions;
+            const key = document.getElementById('bm-k').value.toLowerCase();
+            const conds = this.state.conditions;
             let view = this.state.list.filter(u => {
-                if (key && !u.uname.toLowerCase().includes(key) && !String(u.mid).includes(key) && !(u.sign||'').toLowerCase().includes(key) && !(u.official_verify?.desc||'').toLowerCase().includes(key)) return false;
+                if (key && !u.name.toLowerCase().includes(key) && !String(u.uid).includes(key) && !(u.sign||'').toLowerCase().includes(key)) return false;
                 for (let c of conds) {
                     if (c.type === 'fans') {
-                        const v = u.follower || 0;
-                        if ((c.op === '>=' && v < c.val) || (c.op === '<' && v >= c.val)) return false;
+                        if ((c.op === '>=' && u.fans < c.val) || (c.op === '<' && u.fans >= c.val)) return false;
                     } else if (c.type === 'date') {
-                        let t = 0;
-                        if (c.sub === 'mtime') t = u.mtime;
-                        else if (c.sub === 'last_video_ts') t = u.last_video_ts || 0;
-                        else if (c.sub === 'last_dynamic_ts') t = u.last_dynamic_ts || 0;
+                        let t = c.sub === 'mtime' ? u.followTime : (c.sub === 'last_video_ts' ? (u.videoTime||0) : (u.dynamicTime||0));
                         if ((c.op === '<=' && t > c.val) || (c.op === '>' && t < c.val)) return false;
                     } else if (c.type === 'prop') {
                         if (c.sub === 'bm-sel-verify') {
-                            const t = u.official_verify?.type ?? -1;
-                            if (c.val !== String(t) && !(c.val === "1" && t > 1)) return false;
+                            if (c.val === "1" && !u.org) return false;
+                            if (c.val === "0" && (u.org || !u.desc)) return false;
+                            if (c.val === "-1" && u.desc) return false;
                         } else if (c.sub === 'bm-sel-vip') {
-                            const txt = u.vip?.label?.text || "", vt = u.vip?.vipStatus === 1 ? u.vip.vipType : 0;
-                            if ((c.val === "hundred" && !txt.includes("百年")) || (c.val === "ten" && !txt.includes("十年")) || (c.val === "2" && vt !== 2) || (c.val === "1" && vt !== 1) || (c.val === "0" && vt !== 0)) return false;
+                            if ((c.val === "hundred" && u.vip !== "百年") || (c.val === "ten" && u.vip !== "十年") || (c.val === "2" && u.vip !== "年度" && u.vip !== "百年" && u.vip !== "十年") || (c.val === "1" && u.vip !== "月度") || (c.val === "0" && u.vip)) return false;
                         } else if (c.sub === 'bm-sel-status') {
-                            if ((c.val === "mutual" && u.attribute !== 6) || (c.val === "special" && !(u.tag?.includes(-10) || u.special === 1)) || (c.val === "contract" && !u.contract_info?.is_contract) || (c.val === "deactivated" && u.uname !== "账号已注销")) return false;
+                            if ((c.val === "mutual" && !u.mutual) || (c.val === "special" && !u.special && !u.groups?.includes(-10)) || (c.val === "contract" && !u.contract) || (c.val === "deactivated" && u.name !== "账号已注销")) return false;
                         } else if (c.sub === 'bm-sel-group') {
-                            const tags = u.tag || [];
+                            const tags = u.groups || [];
                             if ((c.val === "0" && tags.length > 0 && !tags.includes(0)) || (c.val !== "0" && !tags.includes(parseInt(c.val)))) return false;
                         }
                     }
@@ -329,42 +428,40 @@
                 const k = this.state.sortKey, d = this.state.sortOrder;
                 view.sort((a, b) => {
                     let vA, vB;
-                    if (k === 'uname') return a.uname.localeCompare(b.uname, 'zh') * d;
-                    if (k === 'follower') { vA = a.follower||0; vB = b.follower||0; }
-                    else if (k === 'mtime') { vA = a.mtime||0; vB = b.mtime||0; }
-                    else if (k === 'last_video') { vA = a.last_video_ts||0; vB = b.last_video_ts||0; }
-                    else if (k === 'last_dynamic') { vA = a.last_dynamic_ts||0; vB = b.last_dynamic_ts||0; }
-                    else if (k === 'verify') { vA = a.official_verify?.type ?? -1; vB = b.official_verify?.type ?? -1; }
+                    if (k === 'uname') return a.name.localeCompare(b.name, 'zh') * d;
+                    if (k === 'follower') { vA = a.fans||0; vB = b.fans||0; }
+                    else if (k === 'mtime') { vA = a.followTime||0; vB = b.followTime||0; }
+                    else if (k === 'last_video') { vA = a.videoTime||0; vB = b.videoTime||0; }
+                    else if (k === 'last_dynamic') { vA = a.dynamicTime||0; vB = b.dynamicTime||0; }
+                    else if (k === 'verify') { vA = a.org?2:(a.desc?1:0); vB = b.org?2:(b.desc?1:0); }
                     else if (k === 'vip') {
-                        const sc = u => u.vip?.label?.text?.includes("百年") ? 100 : (u.vip?.label?.text?.includes("十年") ? 50 : (u.vip?.vipStatus===1 ? (u.vip.vipType===2?10:5) : 0));
+                        const sc = u => u.vip === "百年" ? 100 : (u.vip === "十年" ? 50 : (u.vip === "年度" ? 10 : (u.vip === "月度" ? 5 : 0)));
                         vA = sc(a); vB = sc(b);
                     }
                     return (vA - vB) * d;
                 });
             }
-            this.appendRows(view); this.updateSelectionUI(view.length);
+            this.appendRows(view);
+            this.updateSelectionUI(view.length);
         }
 
         appendRows(items) {
-            const tbody = document.getElementById('bm-list'), frag = document.createDocumentFragment();
+            const tbody = document.getElementById('bm-list');
             if (!tbody) return;
+            const frag = document.createDocumentFragment();
             items.forEach(u => {
-                const tr = document.createElement('tr'); tr.dataset.mid = u.mid;
-                if (this.state.selectedMids.has(u.mid)) tr.classList.add('sel');
+                const tr = document.createElement('tr'); tr.dataset.mid = u.uid;
+                if (this.state.selectedMids.has(u.uid)) tr.classList.add('sel');
                 const d = ts => ts ? new Date(ts * 1000).toISOString().split('T')[0] : '-';
-                let vH = '<span class="bm-tag t-none">无</span>';
-                if (u.vip?.vipStatus === 1) {
-                    const t = u.vip.label?.text || "";
-                    vH = `<span class="bm-tag t-vip">${t.includes("百年")?"百年":(t.includes("十年")?"十年":(u.vip.vipType===2?"年度":"月度"))}</span>`;
-                }
-                let oH = u.official_verify?.type===0 ? '<span class="bm-tag t-per">个人</span>' : (u.official_verify?.type>0 ? '<span class="bm-tag t-org">组织</span>' : '<span class="bm-tag t-none">无</span>');
+                let vH = u.vip ? `<span class="bm-tag t-vip">${u.vip}</span>` : '<span class="bm-tag t-none">无</span>';
+                let oH = u.org ? '<span class="bm-tag t-org">组织</span>' : (u.desc ? '<span class="bm-tag t-per">个人</span>' : '<span class="bm-tag t-none">无</span>');
                 let tL = [];
-                if (u.attribute === 6) tL.push('<span class="bm-tag t-mutual">互相关注</span>');
-                if (u.contract_info?.is_contract) tL.push('<span class="bm-tag t-other">原始粉丝</span>');
-                (u.tag||[]).forEach(t => t===-10 ? tL.push('<span class="bm-tag t-special">特别关注</span>') : (t!==0 && this.state.groups[t] && tL.push(`<span class="bm-tag t-group">${this.state.groups[t]}</span>`)));
-                tr.innerHTML = `<td><input type="checkbox" class="bm-chk" ${this.state.selectedMids.has(u.mid)?'checked':''}></td>
-                    <td><div class="bm-user-cell"><a href="//space.bilibili.com/${u.mid}" target="_blank"><img src="${(u.face||'').replace('http:','')}" class="bm-face" loading="lazy"></a><div class="bm-u-info"><div class="bm-u-row1"><a href="//space.bilibili.com/${u.mid}" target="_blank" class="bm-name" title="${u.uname}">${u.uname}</a>${tL.join('')}</div><span class="bm-sign" title="${u.sign||''}">${u.sign||'-'}</span></div></div></td>
-                    <td>${u.follower===undefined?'-':u.follower.toLocaleString()}</td><td style="color:#61666d">${d(u.last_dynamic_ts)}</td><td style="color:#61666d">${d(u.last_video_ts)}</td><td style="color:#61666d">${d(u.mtime)}</td><td>${vH}</td><td>${oH}</td>`;
+                if (u.mutual) tL.push('<span class="bm-tag t-mutual">互相关注</span>');
+                if (u.contract) tL.push('<span class="bm-tag t-other">原始粉丝</span>');
+                (u.groups||[]).forEach(t => t===-10 ? tL.push('<span class="bm-tag t-special">特别关注</span>') : (t!==0 && this.state.groups[t] && tL.push(`<span class="bm-tag t-group">${this.state.groups[t]}</span>`)));
+                tr.innerHTML = `<td><input type="checkbox" class="bm-chk" ${this.state.selectedMids.has(u.uid)?'checked':''}></td>
+                    <td><div class="bm-user-cell"><a href="//space.bilibili.com/${u.uid}" target="_blank"><img src="${(u.face||'').replace('http:','')}" class="bm-face" loading="lazy"></a><div class="bm-u-info"><div class="bm-u-row1"><a href="//space.bilibili.com/${u.uid}" target="_blank" class="bm-name" title="${u.name}">${u.name}</a>${tL.join('')}</div><span class="bm-sign" title="${u.sign||''}">${u.sign||'-'}</span></div></div></td>
+                    <td>${u.fans===undefined?'-':u.fans.toLocaleString()}</td><td style="color:#61666d">${d(u.dynamicTime)}</td><td style="color:#61666d">${d(u.videoTime)}</td><td style="color:#61666d">${d(u.followTime)}</td><td>${vH}</td><td>${oH}</td>`;
                 frag.appendChild(tr);
             });
             tbody.appendChild(frag);
@@ -389,7 +486,13 @@
         updateSelectionUI(vc) {
             if (!this.uiRoot) return;
             const trs = document.querySelectorAll('#bm-list tr');
-            let sc = 0; trs.forEach(tr => { const s = this.state.selectedMids.has(parseInt(tr.dataset.mid)); tr.classList.toggle('sel', s); tr.querySelector('.bm-chk').checked = s; if(s) sc++; });
+            let sc = 0;
+            trs.forEach(tr => { 
+                const s = this.state.selectedMids.has(parseInt(tr.dataset.mid)); 
+                if(s !== tr.classList.contains('sel')) tr.classList.toggle('sel', s);
+                const chk = tr.querySelector('.bm-chk'); if(chk) chk.checked = s;
+                if(s) sc++; 
+            });
             const all = document.getElementById('bm-all'); if(all) { all.checked = trs.length>0 && sc===trs.length; all.indeterminate = sc>0 && sc<trs.length; }
             const sn = this.state.selectedMids.size, at = this.state.list.length, hs = sn > 0;
             ['bm-btn-follow', 'bm-btn-unfollow', 'bm-btn-group-add', 'bm-btn-group-copy', 'bm-btn-group-move'].forEach(id => { const b = document.getElementById(id); if(b) b.disabled = !hs; });
@@ -400,33 +503,28 @@
         async act(type) {
             if (type === 'fetch') return this.runBackgroundFetch();
             if (this.state.running) return;
-            const fmt = document.getElementById('bm-io-fmt').value;
             if (type === 'export') {
-                let t = Array.from(this.state.selectedMids).map(m => this.state.list.find(u => u.mid === m)).filter(u => u);
+                let t = Array.from(this.state.selectedMids).map(m => this.state.list.find(u => u.uid === m)).filter(u => u);
                 if (!t.length) t = this.state.list;
-                const blob = new Blob([fmt === 'json' ? JSON.stringify(t, null, 2) : '\uFEFFUID,昵称,粉丝,关注,投稿,动态,认证,会员,状态,分组,签名\n' + t.map(u => {
-                    const d = ts => ts ? new Date(ts*1000).toISOString().split('T')[0] : '-', esc = s => `"${String(s||'').replace(/"/g, '""')}"`;
-                    return [u.mid, esc(u.uname), u.follower||0, d(u.mtime), d(u.last_video_ts), d(u.last_dynamic_ts), esc(u.official_verify?.desc), esc(u.vip?.label?.text), esc([u.attribute===6?'互相关注':'',u.special===1?'特别关注':''].filter(x=>x).join(';')), esc((u.tag||[]).map(x=>this.state.groups[x]||(x==-10?'特别关注':x)).join(';')), esc(u.sign)].join(',');
-                }).join('\n')], {type: fmt === 'json' ? 'application/json' : 'text/csv'});
-                const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `Bilibili_Follows_${new Date().toISOString().slice(0,10)}.${fmt}`; a.click(); return;
+                const blob = new Blob([JSON.stringify(t, null, 2)], {type: 'application/json'});
+                const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `Bilibili_Follows_${new Date().toISOString().slice(0,10)}.json`; a.click(); return;
             }
             if (type === 'import') {
-                const i = document.createElement('input'); i.type='file'; i.accept = fmt === 'json' ? ".json" : ".csv,.txt";
+                const i = document.createElement('input'); i.type='file'; i.accept = ".json";
                 i.onchange = e => {
                     const r = new FileReader();
                     r.onload = evt => {
                         let ni = [];
-                        if (fmt === 'json') { try { ni = (JSON.parse(evt.target.result)||[]).filter(x => x.mid && !this.state.list.some(u => u.mid == x.mid)); ni.forEach(x=>{if(!x.uname)x.uname='导入';}); } catch(e){return alert('JSON Error');} }
-                        else {
-                            const l = evt.target.result.split(/\r?\n/).filter(x => x.trim()), p = s => { const r=[]; let c='', q=false; for(let i=0;i<s.length;i++){ if(s[i]==='"'){ if(q&&s[i+1]==='"'){c+='"';i++}else q=!q } else if(s[i]===','&&!q){r.push(c);c=''} else c+=s[i] } r.push(c); return r; };
-                            ni = l.slice(1).map(x => { const c = p(x), m = parseInt(c[0]); if(!m||this.state.list.some(u=>u.mid===m))return null; return { mid: m, uname: c[1]||'导入', follower: parseInt(c[2])||0, mtime: Date.parse(c[3])/1000||0, last_video_ts: Date.parse(c[4])/1000||0, last_dynamic_ts: Date.parse(c[5])/1000||0, official_verify: {desc:c[6]||''}, vip: {label:{text:c[7]||''}}, attribute: c[8]?.includes('互相')?6:2, sign: c[10]||`UID:${m}`, tag: [] }; }).filter(x => x);
-                        }
+                        try {
+                            ni = (JSON.parse(evt.target.result)||[]).filter(x => x.uid && !this.state.list.some(u => u.uid == x.uid));
+                            ni.forEach(x => { if(!x.name) x.name = '导入'; x = this.transform(x); });
+                        } catch(e){return alert('JSON Error');}
                         if(!ni.length) return alert('无新增');
-                        this.state.list.unshift(...ni); this.render(); setTimeout(() => { ni.forEach(x => this.state.selectedMids.add(x.mid)); this.render(); }, 100); alert(`导入 ${ni.length}`);
+                        this.state.list.unshift(...ni); this.render(); setTimeout(() => { ni.forEach(x => this.state.selectedMids.add(x.uid)); this.render(); }, 100); alert(`导入 ${ni.length}`);
                     }; r.readAsText(e.target.files[0]);
                 }; i.click(); return;
             }
-            let t = Array.from(this.state.selectedMids).map(m => this.state.list.find(u => u.mid === m)).filter(u => u);
+            let t = Array.from(this.state.selectedMids).map(m => this.state.list.find(u => u.uid === m)).filter(u => u);
             if (!t.length) return alert('请先选择');
             if (type.startsWith('group-')) {
                 const gid = document.getElementById('bm-sel-target-group').value; if (!gid) return alert('请选目标分组');
@@ -446,8 +544,8 @@
 
         async runBackgroundFetch() {
             if (this.state.fetching) { this.state.stopFetch = true; return; }
-            let t = Array.from(this.state.selectedMids).map(m => this.state.list.find(u => u.mid === m)).filter(u => u);
-            if (!t.length) t = this.state.list.filter(u => document.querySelector(`tr[data-mid="${u.mid}"]`));
+            let t = Array.from(this.state.selectedMids).map(m => this.state.list.find(u => u.uid === m)).filter(u => u);
+            if (!t.length) t = this.state.list.filter(u => document.querySelector(`tr[data-mid="${u.uid}"]`));
             if (!t.length) return alert('请先选择');
             this.state.fetching = true; this.state.stopFetch = false;
             const b = document.getElementById('bm-btn-fetch'); b.textContent = '停止'; b.classList.add('processing');
@@ -463,18 +561,18 @@
                 try {
                     if (!this.state.list.includes(u)) continue;
                     if (type === 'fans') {
-                        const r = await this.req(`https://api.bilibili.com/x/relation/stat?vmid=${u.mid}`); u.follower = r.data.follower;
-                        this.updateCell(u.mid, 2, u.follower.toLocaleString());
+                        const r = await this.req(`https://api.bilibili.com/x/relation/stat?vmid=${u.uid}`); u.fans = r.data.follower;
+                        this.updateCell(u.uid, 2, u.fans.toLocaleString());
                     } else if (type === 'video') {
-                        const q = encWbi({ mid: u.mid, ps: 1, pn: 1 }, this.state.wbiKeys.img_key, this.state.wbiKeys.sub_key);
+                        const q = encWbi({ mid: u.uid, ps: 1, pn: 1 }, this.state.wbiKeys.img_key, this.state.wbiKeys.sub_key);
                         const r = await this.req(`https://api.bilibili.com/x/space/wbi/arc/search?${q}`);
-                        u.last_video_ts = r.data?.list?.vlist?.[0]?.created || 0;
-                        this.updateCell(u.mid, 4, u.last_video_ts ? new Date(u.last_video_ts * 1000).toISOString().split('T')[0] : '-');
+                        u.videoTime = r.data?.list?.vlist?.[0]?.created || 0;
+                        this.updateCell(u.uid, 4, u.videoTime ? new Date(u.videoTime * 1000).toISOString().split('T')[0] : '-');
                     } else if (type === 'dynamic') {
-                        const r = await this.req(`https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid=${u.mid}&offset=`);
+                        const r = await this.req(`https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid=${u.uid}&offset=`);
                         let ts = 0; (r.data?.items||[]).slice(0,3).forEach(x => { const t=x?.modules?.module_author?.pub_ts||0; if(t>ts)ts=t; });
-                        u.last_dynamic_ts = ts;
-                        this.updateCell(u.mid, 3, u.last_dynamic_ts ? new Date(u.last_dynamic_ts * 1000).toISOString().split('T')[0] : '-');
+                        u.dynamicTime = ts;
+                        this.updateCell(u.uid, 3, u.dynamicTime ? new Date(u.dynamicTime * 1000).toISOString().split('T')[0] : '-');
                     }
                 } catch (e) {} await new Promise(r => setTimeout(r, d));
             }
@@ -488,8 +586,8 @@
                 for (let i = 0; i < items.length; i++) {
                     if (this.uiRoot.style.display === 'none') break;
                     st.innerHTML = `取关 <span class="bm-status-num">${i+1}/${items.length}</span>`;
-                    try { await this.req('https://api.bilibili.com/x/relation/modify', 'POST', `fid=${items[i].mid}&act=2&re_src=11&csrf=${csrf}`);
-                        this.state.list = this.state.list.filter(x => x.mid != items[i].mid); this.state.selectedMids.delete(items[i].mid);
+                    try { await this.req('https://api.bilibili.com/x/relation/modify', 'POST', `fid=${items[i].uid}&act=2&re_src=11&csrf=${csrf}`);
+                        this.state.list = this.state.list.filter(x => x.uid != items[i].uid); this.state.selectedMids.delete(items[i].uid);
                     } catch(e){} await new Promise(r => setTimeout(r, 300));
                 }
             } else {
@@ -497,10 +595,10 @@
                     if (this.uiRoot.style.display === 'none') break;
                     const chunk = items.slice(i, i + 50); st.innerHTML = `关注 <span class="bm-status-num">${Math.min(i+50,items.length)}/${items.length}</span>`;
                     try {
-                        const res = await this.req('https://api.bilibili.com/x/relation/batch/modify', 'POST', `fids=${chunk.map(u=>u.mid).join(',')}&act=1&re_src=11&csrf=${csrf}`);
+                        const res = await this.req('https://api.bilibili.com/x/relation/batch/modify', 'POST', `fids=${chunk.map(u=>u.uid).join(',')}&act=1&re_src=11&csrf=${csrf}`);
                         const fail = res.data?.failed_fids || [];
-                        chunk.forEach(u => { if(!fail.includes(u.mid)) u.attribute=2; });
-                        if(fail.length) for(let u of chunk.filter(x=>fail.includes(x.mid))) { try{await this.req('https://api.bilibili.com/x/relation/modify', 'POST', `fid=${u.mid}&act=1&re_src=11&csrf=${csrf}`);u.attribute=2;}catch(e){} await new Promise(r=>setTimeout(r,300)); }
+                        chunk.forEach(u => { if(!fail.includes(u.uid)) u.mutual = u.mutual; }); 
+                        if(fail.length) for(let u of chunk.filter(x=>fail.includes(x.uid))) { try{await this.req('https://api.bilibili.com/x/relation/modify', 'POST', `fid=${u.uid}&act=1&re_src=11&csrf=${csrf}`);}catch(e){} await new Promise(r=>setTimeout(r,300)); }
                     } catch(e){} await new Promise(r => setTimeout(r, 1000));
                 }
             }
@@ -513,11 +611,11 @@
             for (let i = 0; i < items.length; i += 50) {
                 if (this.uiRoot.style.display === 'none') break;
                 const chunk = items.slice(i, i + 50); st.innerHTML = `处理 <span class="bm-status-num">${Math.min(i+50,items.length)}/${items.length}</span>`;
-                let d = `fids=${chunk.map(u=>u.mid).join(',')}&csrf=${csrf}`;
+                let d = `fids=${chunk.map(u=>u.uid).join(',')}&csrf=${csrf}`;
                 if (mode === 'move') d += `&beforeTagids=${sGid}&afterTagids=${tGid}`; else d += `&tagids=${tGid}`;
                 try {
                     await this.req(url, 'POST', d); const g = parseInt(tGid);
-                    chunk.forEach(u => { if(!u.tag)u.tag=[]; if(mode==='move')u.tag=u.tag.filter(t=>t!=sGid); if(!u.tag.includes(g))u.tag.push(g); });
+                    chunk.forEach(u => { if(!u.groups)u.groups=[]; if(mode==='move')u.groups=u.groups.filter(t=>t!=sGid); if(!u.groups.includes(g))u.groups.push(g); });
                 } catch(e) {} await new Promise(r => setTimeout(r, 300));
             }
             st.textContent = `完成`; this.render();
