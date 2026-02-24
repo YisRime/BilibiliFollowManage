@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliBili 关注管理
 // @namespace    https://github.com/YisRime/BilibiliFollowManage
-// @version      6.0
+// @version      6.1
 // @description  高效管理关注与分组列表，可按粉丝数/投稿时间/动态时间排序，并支持筛选会员/认证/老粉/互关等状态，然后可进行批量取关/关注/转移分组等操作，也支持导入导出数据，方便备份和迁移。
 // @author       苡淞
 // @match        https://space.bilibili.com/*/relation/follow*
@@ -184,7 +184,15 @@
             Q('bm-btn-import').onclick = () => this.act('import');
             Q('bm-btn-export').onclick = () => this.act('export');
             Q('bm-k').oninput = () => this.render();
-            Q('bm-f-tog').onclick = (e) => e.target.textContent = (this.state.inputState.fans = e.target.textContent === '≥' ? '<' : '≥');
+            Q('bm-f-tog').onclick = (e) => {
+                if (e.target.textContent === '≥') {
+                    e.target.textContent = '<';
+                    this.state.inputState.fans = '<';
+                } else {
+                    e.target.textContent = '≥';
+                    this.state.inputState.fans = '>=';
+                }
+            };
             Q('bm-d-tog').onclick = (e) => { 
                 const isBefore = e.target.textContent === '早于'; 
                 this.state.inputState.date = isBefore ? '>' : '<='; e.target.textContent = isBefore ? '晚于' : '早于'; 
@@ -212,7 +220,7 @@
             if (type === 'fans') {
                 const val = parseInt(Q('bm-f-val').value); if (isNaN(val)) return;
                 const op = this.state.inputState.fans;
-                this.state.conditions.push({ type: 'fans', op, val, label: `粉丝数 ${op} ${val}` });
+                this.state.conditions.push({ type: 'fans', op, val, label: `粉丝数 ${Q('bm-f-tog').textContent} ${val}` });
                 Q('bm-f-val').value = '';
             } else if (type === 'date') {
                 const valStr = Q('bm-d-val').value; if (!valStr) return;
