@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliBili 关注管理
 // @namespace    https://github.com/YisRime/BilibiliFollowManage
-// @version      8.0
+// @version      8.1
 // @description  B站关注管理，支持批量取关、分组管理、信息同步等功能，适用于批量管理关注列表。
 // @author       苡淞
 // @match        https://space.bilibili.com/*/relation/follow*
@@ -141,6 +141,26 @@
             });
         }
 
+        async updateDBItem(item) {
+            if (!this.db) await this.initDB();
+            return new Promise((res, rej) => {
+                const tx = this.db.transaction('follows', 'readwrite');
+                tx.objectStore('follows').put(item);
+                tx.oncomplete = res;
+                tx.onerror = rej;
+            });
+        }
+        
+        async removeDBItem(uid) {
+            if (!this.db) await this.initDB();
+            return new Promise((res, rej) => {
+                const tx = this.db.transaction('follows', 'readwrite');
+                tx.objectStore('follows').delete(uid);
+                tx.oncomplete = res;
+                tx.onerror = rej;
+            });
+        }
+
         toast(msg) {
             if (!this.toastEl) { this.toastEl = CE('div', 'bm-toast'); document.body.appendChild(this.toastEl); }
             this.toastEl.textContent = msg; this.toastEl.classList.add('show');
@@ -189,7 +209,8 @@
                                 <button class="bm-btn" id="bm-btn-imp">导入</button>
                                 <button class="bm-btn" id="bm-btn-exp">导出</button>
                                 <div class="bm-v-divider"></div>
-                                <button class="bm-btn" id="bm-btn-fetch">获取</button>
+                                <button class="bm-btn" id="bm-btn-fetch-fans">粉丝</button>
+                                <button class="bm-btn" id="bm-btn-fetch-dyn">动态</button>
                                 <button class="bm-btn" id="bm-btn-unf" disabled>取关</button>
                                 <button class="bm-btn" id="bm-btn-fol" disabled>关注</button>
                                 <div class="bm-close" id="bm-cls">✕</div>
@@ -202,15 +223,27 @@
                                 <button class="bm-btn-add" id="bm-add-f">+</button>
                             </div>
                             <div class="bm-group">
-                                <div class="bm-toggle" id="bm-d-k" style="width:40px">关注</div>
-                                <input type="date" id="bm-d-v" class="bm-input" style="width:115px">
+                                <div class="bm-toggle" id="bm-d-k" style="width:20px">关注</div>
+                                <input type="date" id="bm-d-v" class="bm-input" style="width:100px">
                                 <div class="bm-toggle" id="bm-d-op">早于</div>
                                 <button class="bm-btn-add" id="bm-add-d">+</button>
                             </div>
-                            <select id="bm-s-vip" class="bm-select"><option value="">会员</option><option value="hundred">百年</option><option value="ten">十年</option><option value="2">年度</option><option value="1">月度</option><option value="0">无</option></select>
-                            <select id="bm-s-ver" class="bm-select"><option value="">认证</option><option value="1">组织</option><option value="0">个人</option><option value="-1">无</option></select>
-                            <select id="bm-s-stat" class="bm-select"><option value="">状态</option><option value="mutual">互关</option><option value="special">特别</option><option value="contract">老粉</option><option value="die">已注销</option></select>
-                            <select id="bm-s-grp" class="bm-select"><option value="">分组</option><option value="-10">特别关注</option><option value="0">默认分组</option></select>
+                            <div class="bm-group">
+                                <select id="bm-s-vip" class="bm-select" style="width:40px"><option value="">会员</option><option value="hundred">百年</option><option value="ten">十年</option><option value="2">年度</option><option value="1">月度</option><option value="0">无</option></select>
+                                <div class="bm-toggle" id="bm-s-vip-op">是</div>
+                            </div>
+                            <div class="bm-group">
+                                <select id="bm-s-ver" class="bm-select" style="width:40px"><option value="">认证</option><option value="1">组织</option><option value="0">个人</option><option value="-1">无</option></select>
+                                <div class="bm-toggle" id="bm-s-ver-op">是</div>
+                            </div>
+                            <div class="bm-group">
+                                <select id="bm-s-stat" class="bm-select" style="width:40px"><option value="">状态</option><option value="mutual">互关</option><option value="special">特别</option><option value="contract">老粉</option><option value="die">已注销</option></select>
+                                <div class="bm-toggle" id="bm-s-stat-op">是</div>
+                            </div>
+                            <div class="bm-group">
+                                <select id="bm-s-grp" class="bm-select" style="width:40px"><option value="">分组</option><option value="-10">特别关注</option><option value="0">默认分组</option></select>
+                                <div class="bm-toggle" id="bm-s-grp-op">是</div>
+                            </div>
                             <div class="bm-filter-area" id="bm-conds" style="display:none"></div>
                         </div>
                     </div>
@@ -240,9 +273,19 @@
             };
             Q('#bm-add-f').onclick = () => this.addCond('fans');
             Q('#bm-add-d').onclick = () => this.addCond('date');
-            ['bm-s-vip', 'bm-s-ver', 'bm-s-stat', 'bm-s-grp'].forEach(id => Q('#'+id).onchange = e => this.addCond('prop', e.target));
+            const setupToggle = (id, textA, textB) => { Q(id).onclick = e => { e.target.textContent = e.target.textContent === textA ? textB : textA; }; };
+            setupToggle('#bm-s-vip-op', '是', '非');
+            setupToggle('#bm-s-ver-op', '是', '非');
+            setupToggle('#bm-s-stat-op', '是', '非');
+            setupToggle('#bm-s-grp-op', '是', '非');
+            const addCondOnChange = (type) => Q(`#bm-s-${type}`, this.ui).onchange = e => { if (e.target.value) this.addCond(type); };
+            addCondOnChange('vip');
+            addCondOnChange('ver');
+            addCondOnChange('stat');
+            addCondOnChange('grp');
             ['bm-btn-fol', 'bm-btn-unf', 'bm-btn-g-add', 'bm-btn-g-cpy', 'bm-btn-g-mov'].forEach(id => Q('#'+id).onclick = () => this.act(id.split('-').pop(), id.includes('unf')?2:1));
-            Q('#bm-btn-fetch').onclick = () => this.act('fetch');
+            Q('#bm-btn-fetch-fans').onclick = () => this.act('fetch-fans');
+            Q('#bm-btn-fetch-dyn').onclick = () => this.act('fetch-dyn');
             Q('#bm-btn-imp').onclick = () => this.act('imp');
             Q('#bm-btn-exp').onclick = () => this.act('exp');
             this.ui.querySelectorAll('th[data-s]').forEach(th => th.onclick = () => this.sort(th.dataset.s));
@@ -319,12 +362,15 @@
             };
         }
 
-        addCond(t, el) {
+        addCond(t) {
             const push = (c) => { this.state.conds.push(c); this.renderConds(); this.render(); };
-            if (t === 'prop') {
+            if (['vip', 'ver', 'stat', 'grp'].includes(t)) {
+                const el = Q(`#bm-s-${t}`);
                 if (!el.value) return;
-                const m = { 'bm-s-vip': '会员', 'bm-s-ver': '认证', 'bm-s-stat': '状态', 'bm-s-grp': '分组' };
-                push({ t, s: el.id, v: el.value, l: `${m[el.id]}: ${el.options[el.selectedIndex].text}` });
+                const opEl = Q(`#bm-s-${t}-op`);
+                const op = opEl.textContent === '是';
+                const label = `${el.options[0].text} ${opEl.textContent} ${el.options[el.selectedIndex].text}`;
+                push({ t, v: el.value, op, l: label });
                 el.value = "";
             } else {
                 const iv = Q(t==='fans'?'#bm-f-v':'#bm-d-v'), v = iv.value;
@@ -355,12 +401,21 @@
                     else if (c.t === 'date') {
                         let t = c.s==='mtime'?u.followTime:(c.s==='last_video_ts'?u.videoTime:u.dynamicTime);
                         if ((c.op==='<=' && t>c.v) || (c.op==='>' && t<c.v)) return false;
-                    }
-                    else if (c.t === 'prop') {
-                        if (c.s === 'bm-s-ver') { if(c.v==="1" && !u.org) return false; if(c.v==="0" && (u.org||!u.desc)) return false; if(c.v==="-1" && u.desc) return false; }
-                        else if (c.s === 'bm-s-vip') { if(c.v==="0"){if(u.vip)return false;} else if(c.v==="2"){if(!["年度","百年","十年"].includes(u.vip))return false;} else if(c.v==="1" && u.vip!=="月度")return false; else if(["hundred","ten"].includes(c.v) && u.vip!==(c.v==="hundred"?"百年":"十年")) return false; }
-                        else if (c.s === 'bm-s-stat') { if(c.v==="mutual"&&!u.mutual || c.v==="special"&&!u.special&&!u.groups?.includes(-10) || c.v==="contract"&&!u.contract || c.v==="die"&&u.name!=="账号已注销") return false; }
-                        else if (c.s === 'bm-s-grp') { if(c.v==="0" && u.groups?.some(g=>g!==0)) return false; if(c.v!=="0" && !u.groups?.includes(parseInt(c.v))) return false; }
+                    } else {
+                        let is_match = false;
+                        if (c.t === 'ver') {
+                            is_match = (c.v === "1" && u.org) || (c.v === "0" && !u.org && !!u.desc) || (c.v === "-1" && !u.desc);
+                        } else if (c.t === 'vip') {
+                            is_match = (c.v === "0" && !u.vip) || (c.v === "2" && ["年度", "百年", "十年"].includes(u.vip)) ||
+                                       (c.v === "1" && u.vip === "月度") || (c.v === "hundred" && u.vip === "百年") || (c.v === "ten" && u.vip === "十年");
+                        } else if (c.t === 'stat') {
+                            is_match = (c.v === "mutual" && u.mutual) || (c.v === "special" && (u.special || u.groups?.includes(-10))) ||
+                                       (c.v === "contract" && u.contract) || (c.v === "die" && u.name === "账号已注销");
+                        } else if (c.t === 'grp') {
+                            const gid = parseInt(c.v);
+                            is_match = (gid === 0 && !u.groups?.some(g => g !== 0)) || (gid !== 0 && u.groups?.includes(gid));
+                        }
+                        if (is_match !== c.op) return false;
                     }
                 }
                 return true;
@@ -427,7 +482,7 @@
         }
 
         async act(t, op) {
-            if (t === 'fetch') return this.fetchInfo();
+            if (['fetch-fans', 'fetch-dyn'].includes(t)) return this.fetchInfo(t.split('-')[1]);
             if (this.state.busy) return;
             if (t === 'exp') {
                 const s = this.state.selected.size ? Array.from(this.state.selected).map(m => this.state.list.find(x => x.uid===m)).filter(x=>x) : this.state.list;
@@ -463,7 +518,7 @@
                 const gn = this.state.groups[gid] || '特殊';
                 let sg = 0; 
                 if (t === 'mov') {
-                    sg = (this.state.conds.find(c => c.t==='prop' && c.s==='bm-s-grp')||{}).v || 0;
+                    sg = (this.state.conds.find(c => c.t==='grp')||{}).v || 0;
                     if (sg==0 && !confirm("未选择具体分组，从[默认分组]移动？")) return;
                 }
                 if (!confirm(`${t==='mov'?'移动':(t==='cpy'?'复制':'添加')} ${items.length} 人到 ${gn}?`)) return;
@@ -475,39 +530,69 @@
                 await this.modRel(items, op);
                 this.state.busy = false;
             }
-            this.saveDB();
         }
 
-        async fetchInfo() {
+        async fetchInfo(type) {
             if (this.state.busy) { this.state.stop = true; return; }
-            let items = Array.from(this.state.selected).map(m => this.state.list.find(x => x.uid===m)).filter(x=>x);
+            let items = Array.from(this.state.selected).map(m => this.state.list.find(x => x.uid === m)).filter(x => x);
             if (!items.length) items = this.view;
             if (!items.length) return alert('列表为空');
             this.state.busy = true; this.state.stop = false;
-            const b = Q('#bm-btn-fetch'); b.textContent = '停止'; b.classList.add('processing');
+            const b = Q(type === 'fans' ? '#bm-btn-fetch-fans' : '#bm-btn-fetch-dyn');
+            b.textContent = '停止'; b.classList.add('processing');
+            const st = Q('#bm-st');
+            let completed = 0;
             await this.getWbi();
-            const run = async (key, delay, fn) => {
-                for (let i = 0; i < items.length; i++) {
-                    if (this.state.stop || this.ui.style.display === 'none') break;
-                    const u = items[i];
-                    if (!this.state.list.includes(u)) continue;
-                    try { await fn(u); const c = Q(`tr[data-mid="${u.uid}"]`)?.cells[{fans:2,video:4,dyn:3}[key]]; if(c) c.textContent = key==='fans'?u.fans.toLocaleString():(u.dynamicTime||u.videoTime?new Date((key==='video'?u.videoTime:u.dynamicTime)*1000).toISOString().split('T')[0]:'-'); } catch{}
-                    await new Promise(r => setTimeout(r, delay));
-                }
+            const updateProgress = () => {
+                completed++;
+                st.innerHTML = `更新中... <span class="bm-status-num">${completed} / ${items.length}</span>`;
             };
-            await Promise.all([
-                run('fans', 250, async u => { u.fans = (await this.req(`https://api.bilibili.com/x/relation/stat?vmid=${u.uid}`)).data.follower; }),
-                run('video', 4000, async u => { 
-                    const q = encWbi({ mid: u.uid, ps: 1, pn: 1 }, this.state.wbi.ik, this.state.wbi.sk);
-                    u.videoTime = (await this.req(`https://api.bilibili.com/x/space/wbi/arc/search?${q}`)).data?.list?.vlist?.[0]?.created || 0; 
-                }),
-                run('dyn', 4000, async u => {
-                    const r = await this.req(`https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid=${u.uid}&offset=`);
-                    u.dynamicTime = r.data?.items?.reduce((max, x) => Math.max(max, x?.modules?.module_author?.pub_ts||0), 0) || 0;
-                })
-            ]);
-            this.state.busy = false; b.textContent = '获取信息'; b.classList.remove('processing');
-            this.saveDB();
+            const tasks = items.map(u => async () => {
+                if (this.state.stop || this.ui.style.display === 'none' || !this.state.list.includes(u)) return;
+                try {
+                    if (type === 'fans') {
+                        const { data } = await this.req(`https://api.bilibili.com/x/relation/stat?vmid=${u.uid}`);
+                        u.fans = data.follower;
+                        const c = Q(`tr[data-mid="${u.uid}"]`)?.cells[2];
+                        if (c) c.textContent = u.fans.toLocaleString();
+                    } else if (type === 'dyn') {
+                        const q = encWbi({ mid: u.uid, ps: 1, pn: 1 }, this.state.wbi.ik, this.state.wbi.sk);
+                        const [videoRes, dynRes] = await Promise.all([
+                            this.req(`https://api.bilibili.com/x/space/wbi/arc/search?${q}`).catch(()=>({data:{list:{vlist:[]}}})),
+                            this.req(`https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid=${u.uid}&offset=`).catch(()=>({data:{items:[]}}))
+                        ]);
+        
+                        u.videoTime = videoRes.data?.list?.vlist?.[0]?.created || u.videoTime || 0;
+                        const c_v = Q(`tr[data-mid="${u.uid}"]`)?.cells[4];
+                        if (c_v) c_v.textContent = u.videoTime ? new Date(u.videoTime * 1000).toISOString().split('T')[0] : '-';
+        
+                        u.dynamicTime = dynRes.data?.items?.reduce((max, x) => Math.max(max, x?.modules?.module_author?.pub_ts || 0), 0) || u.dynamicTime || 0;
+                        const c_d = Q(`tr[data-mid="${u.uid}"]`)?.cells[3];
+                        if (c_d) c_d.textContent = u.dynamicTime ? new Date(u.dynamicTime * 1000).toISOString().split('T')[0] : '-';
+                    }
+                    await this.updateDBItem(u);
+                } catch (e) { console.error(`Failed to fetch info for ${u.uid}`, e); }
+                updateProgress();
+            });
+            const queue = [...tasks];
+            const executing = new Set();
+            const run = async () => {
+                while (queue.length > 0) {
+                    if (this.state.stop) break;
+                    while (executing.size < 5 && queue.length > 0) {
+                        const task = queue.shift();
+                        const promise = task().finally(() => executing.delete(promise));
+                        executing.add(promise);
+                    }
+                    if (executing.size > 0) await Promise.race(executing);
+                }
+                await Promise.all(executing);
+            };
+            await run();
+            this.state.busy = false; this.state.stop = false;
+            b.textContent = type === 'fans' ? '粉丝' : '动态';
+            b.classList.remove('processing');
+            st.textContent = completed > 0 ? `更新完成 ${completed} 人` : '已停止';
         }
 
         async modRel(items, act) {
@@ -516,10 +601,12 @@
                 for (let i = 0; i < items.length; i++) {
                     if (this.ui.style.display === 'none') break;
                     st.innerHTML = `取关 <span class="bm-status-num">${i+1}/${items.length}</span>`;
+                    const uid = items[i].uid;
                     try {
-                        await this.req('https://api.bilibili.com/x/relation/modify', 'POST', `fid=${items[i].uid}&act=2&re_src=11&csrf=${csrf}`);
-                        this.state.list = this.state.list.filter(x => x.uid !== items[i].uid);
-                        this.state.selected.delete(items[i].uid);
+                        await this.req('https://api.bilibili.com/x/relation/modify', 'POST', `fid=${uid}&act=2&re_src=11&csrf=${csrf}`);
+                        this.state.list = this.state.list.filter(x => x.uid !== uid);
+                        this.state.selected.delete(uid);
+                        await this.removeDBItem(uid);
                     } catch {}
                     await new Promise(r => setTimeout(r, 300));
                 }
@@ -550,7 +637,12 @@
                 try {
                     await this.req(uri, 'POST', d);
                     const g = parseInt(tid);
-                    chk.forEach(u => { if(!u.groups)u.groups=[]; if(mode==='mov')u.groups=u.groups.filter(t=>t!=sid); if(!u.groups.includes(g))u.groups.push(g); });
+                    for(const u of chk){
+                        if(!u.groups) u.groups=[]; 
+                        if(mode==='mov') u.groups=u.groups.filter(t=>t!=sid); 
+                        if(!u.groups.includes(g)) u.groups.push(g);
+                        await this.updateDBItem(u);
+                    }
                 } catch {}
                 await new Promise(r => setTimeout(r, 300));
             }
