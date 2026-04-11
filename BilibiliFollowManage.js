@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliBili 关注管理
 // @namespace    https://github.com/YisRime/BilibiliFollowManage
-// @version      8.1
+// @version      8.2
 // @description  B站关注管理，支持批量取关、分组管理、信息同步等功能，适用于批量管理关注列表。
 // @author       苡淞
 // @match        https://space.bilibili.com/*/relation/follow*
@@ -25,16 +25,18 @@
     };
 
     GM_addStyle(`
-        :root{--b-blue:#00aeec;--b-blue-hover:#00a1d6;--b-red:#ff4d4f;--b-bg-body:#ffffff;--b-bg-gray:#f6f7f8;--b-bg-hover:#e3f5ff;--b-border:#e3e5e7;--b-radius:6px;}
+        :root{--b-blue:#00aeec;--b-blue-hover:#00a1d6;--b-red:#ff4d4f;--b-bg-body:#ffffff;--b-bg-hover:#e3f5ff;--b-border:#e3e5e7;--b-radius:6px;}
         .bm-btn-entry{position:fixed;top:160px;right:20px;z-index:999;background:var(--b-blue);color:#fff;padding:8px 16px;border-radius:8px;border:none;cursor:pointer;box-shadow:0 4px 12px rgba(0,174,236,0.3);font-size:14px;transition:all .2s}
         .bm-btn-entry:hover{transform:translateY(-2px);background:var(--b-blue-hover)}
         .bm-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;display:flex;justify-content:center;align-items:center;backdrop-filter:blur(2px)}
         .bm-win{width:95vw;max-width:1400px;height:90vh;background:var(--b-bg-body);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.08);font-family:-apple-system,sans-serif;color:#18191c}
-        .bm-header{flex-shrink:0;background:var(--b-bg-body);border-bottom:1px solid var(--b-border);display:flex;flex-direction:column;padding:12px 20px;gap:10px;position:relative}
-        .bm-top-bar{display:flex;justify-content:space-between;align-items:center;gap:12px;}
-        .bm-left,.bm-right{display:flex;align-items:center;gap:8px;}
-        .bm-center{flex:1;display:flex;justify-content:center;align-items:center;overflow:hidden;white-space:nowrap;}
-        .bm-filter-bar{display:none;background:#f9f9f9;padding:8px 12px;border-radius:var(--b-radius);gap:12px;flex-wrap:wrap;align-items:center;border:1px solid var(--b-border);}
+        .bm-main-content{flex:1;display:flex;flex-direction:column;overflow:hidden;width:100%}
+        .bm-top-bar, .bm-sub-bar, .bm-cond-bar{flex-shrink:0;display:flex;align-items:center;gap:8px;padding:8px 20px;border-bottom:1px solid var(--b-border);background:var(--b-bg-body);overflow-x:auto;white-space:nowrap;}
+        .bm-top-bar{padding:10px 20px;}
+        .bm-cond-bar{flex-wrap:wrap;padding:6px 20px;}
+        .bm-filter-controls{display:flex;gap:10px;align-items:center;}
+        .bm-action-bar-inline{display:flex;align-items:center;gap:8px;}
+        .bm-body{flex:1;overflow-y:auto;scrollbar-width:thin;background:var(--b-bg-body)}
         .bm-input,.bm-select{height:32px;box-sizing:border-box;border:1px solid var(--b-border);border-radius:var(--b-radius);padding:0 10px;font-size:13px;color:#18191c;outline:none;background:var(--b-bg-body)}
         .bm-input:focus,.bm-select:focus{border-color:var(--b-blue)}
         .bm-select{min-width:70px;cursor:pointer}
@@ -42,30 +44,29 @@
         .bm-group>*{border-radius:0;margin-left:-1px}
         .bm-group>*:first-child{border-radius:var(--b-radius) 0 0 var(--b-radius);margin-left:0}
         .bm-group>*:last-child{border-radius:0 var(--b-radius) var(--b-radius) 0}
-        .bm-group .bm-toggle{height:32px;padding:0 10px;background:var(--b-bg-gray);border:1px solid var(--b-border);font-size:12px;color:#61666d;cursor:pointer;display:flex;align-items:center;justify-content:center;user-select:none;flex-shrink:0}
+        .bm-group .bm-toggle{height:32px;padding:0 10px;background:#fafafa;border:1px solid var(--b-border);font-size:12px;color:#61666d;cursor:pointer;display:flex;align-items:center;justify-content:center;user-select:none;flex-shrink:0}
         .bm-group .bm-toggle:hover{background:#eee;color:#18191c;z-index:1}
         .bm-group .bm-btn-add{height:32px;width:32px;padding:0;border:1px solid var(--b-border);background:var(--b-bg-body);color:var(--b-blue);font-size:18px;font-weight:700;display:flex;align-items:center;justify-content:center;cursor:pointer;line-height:1;flex-shrink:0}
         .bm-group .bm-btn-add:hover{background:var(--b-bg-hover);border-color:var(--b-blue);z-index:1}
         .bm-btn{height:32px;padding:0 14px;border-radius:var(--b-radius);border:1px solid var(--b-border);background:var(--b-bg-body);color:#18191c;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:all .2s;white-space:nowrap;font-weight:500}
         .bm-btn:hover:not(:disabled){border-color:var(--b-blue);color:var(--b-blue);background:var(--b-bg-hover)}
-        .bm-btn:disabled{opacity:.6;cursor:not-allowed;background:var(--b-bg-gray);color:#9499a0}
+        .bm-btn:disabled{opacity:.6;cursor:not-allowed;background:#f4f4f4;color:#9499a0}
         .bm-btn.processing{border-color:#fa8c16;color:#fa8c16;background:#fff7e6}
-        .bm-v-divider{width:1px;height:24px;background:var(--b-border);margin:0 4px}
-        .bm-filter-area{display:flex;flex-wrap:wrap;gap:8px;flex:1;align-items:center}
+        .bm-v-divider{width:1px;height:20px;background:var(--b-border);margin:0 4px}
+        .bm-lbl{font-size:13px;color:#61666d;}
         .bm-filter-tag{display:flex;align-items:center;gap:6px;background:#e6f7ff;border:1px solid #91d5ff;color:#096dd9;padding:0 8px;height:24px;border-radius:4px;font-size:12px;animation:fadeIn .2s}
         .bm-filter-tag .rm{cursor:pointer;font-weight:700;opacity:.6;font-size:14px}
         .bm-filter-tag:hover .rm{opacity:1;color:var(--b-red)}
         @keyframes fadeIn{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}
-        .bm-status-text{color:#61666d;font-size:13px;white-space:nowrap}
+        .bm-status-text{color:#61666d;font-size:13px;white-space:nowrap;margin-right:8px;}
         .bm-status-num{font-weight:700;color:#18191c;margin:0 4px;font-size:14px}
         .bm-close{font-size:20px;color:#9499a0;cursor:pointer;margin-left:8px;transition:color .2s}
         .bm-close:hover{color:#18191c}
-        .bm-body{flex:1;overflow-y:auto;scrollbar-width:thin;background:var(--b-bg-gray)}
-        .bm-table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed;background:var(--b-bg-body)}
+        .bm-table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed;}
         .bm-table th{position:sticky;top:0;background:#fafafa;z-index:10;padding:12px 10px;border-bottom:1px solid var(--b-border);color:#61666d;text-align:left;font-weight:600;white-space:nowrap;user-select:none;cursor:pointer}
         .bm-table th:hover{background:#f0f0f0;color:#18191c}
         .bm-table th.active{color:var(--b-blue);background:#e6f7ff}
-        .bm-table td{padding:8px 10px;border-bottom:1px solid var(--b-bg-gray);height:54px;box-sizing:border-box;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#18191c}
+        .bm-table td{padding:8px 10px;border-bottom:1px solid #f4f4f4;height:54px;box-sizing:border-box;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#18191c}
         .bm-table tr:hover{background:#fafafa}
         .bm-table tr.sel{background:var(--b-bg-hover)!important}
         .bm-user-cell{display:flex;align-items:center;gap:10px}
@@ -92,6 +93,7 @@
                 filter: { fans: '>=', date: '<=', dateType: 'mtime' },
                 conds: [], selected: new Set()
             };
+            this.settings = { delay: 300, fetchDelay: 1000 };
             this.uid = window.location.pathname.match(/space\/(\d+)/)?.[1] || document.cookie.match(/DedeUserID=(\d+)/)?.[1];
             this.db = null;
             const btn = CE('button', 'bm-btn-entry');
@@ -99,6 +101,7 @@
             btn.onclick = () => this.show();
             document.body.appendChild(btn);
             this.initDB();
+            this.loadSettings();
         }
 
         initDB() {
@@ -109,6 +112,29 @@
                     if (!db.objectStoreNames.contains('follows')) db.createObjectStore('follows', { keyPath: 'uid' });
                 };
                 r.onsuccess = e => { this.db = e.target.result; res(); };
+                r.onerror = rej;
+            });
+        }
+        
+        loadSettings() {
+            try {
+                const s = JSON.parse(localStorage.getItem('BiliFollowManageSettings'));
+                if (s && typeof s === 'object') this.settings = { ...this.settings, ...s };
+            } catch {}
+        }
+
+        saveSettings() {
+            localStorage.setItem('BiliFollowManageSettings', JSON.stringify(this.settings));
+        }
+
+        async clearCache() {
+            if (!this.db || !confirm('确定清空所有关注数据？')) return;
+            return new Promise((res, rej) => {
+                const r = this.db.transaction('follows', 'readwrite').objectStore('follows').clear();
+                r.onsuccess = () => {
+                    this.state.list = []; this.state.selected.clear();
+                    this.render(); res();
+                };
                 r.onerror = rej;
             });
         }
@@ -193,30 +219,10 @@
             if (this.ui) return;
             this.ui = CE('div', 'bm-overlay'); this.ui.style.display = 'none';
             this.ui.innerHTML = `
-                <div class="bm-win">
-                    <div class="bm-header">
-                        <div class="bm-top-bar">
-                            <div class="bm-left">
-                                <input id="bm-k" class="bm-input" placeholder="搜索..." style="width:160px">
-                                <button class="bm-btn" id="bm-btn-ft">筛选</button>
-                                <select id="bm-s-tg" class="bm-select"><option value="">目标分组</option></select>
-                                <button class="bm-btn" id="bm-btn-g-add">添加</button>
-                                <button class="bm-btn" id="bm-btn-g-cpy">复制</button>
-                                <button class="bm-btn" id="bm-btn-g-mov">移动</button>
-                            </div>
-                            <div class="bm-center"><div class="bm-status-text" id="bm-st"></div></div>
-                            <div class="bm-right">
-                                <button class="bm-btn" id="bm-btn-imp">导入</button>
-                                <button class="bm-btn" id="bm-btn-exp">导出</button>
-                                <div class="bm-v-divider"></div>
-                                <button class="bm-btn" id="bm-btn-fetch-fans">粉丝</button>
-                                <button class="bm-btn" id="bm-btn-fetch-dyn">动态</button>
-                                <button class="bm-btn" id="bm-btn-unf" disabled>取关</button>
-                                <button class="bm-btn" id="bm-btn-fol" disabled>关注</button>
-                                <div class="bm-close" id="bm-cls">✕</div>
-                            </div>
-                        </div>
-                        <div class="bm-filter-bar" id="bm-frow">
+            <div class="bm-win">
+                <div class="bm-main-content">
+                    <div class="bm-top-bar">
+                        <div class="bm-filter-controls">
                             <div class="bm-group">
                                 <input type="number" id="bm-f-v" class="bm-input" placeholder="粉丝数" style="width:80px">
                                 <div class="bm-toggle" id="bm-f-op">≥</div>
@@ -244,16 +250,42 @@
                                 <select id="bm-s-grp" class="bm-select" style="width:40px"><option value="">分组</option><option value="-10">特别关注</option><option value="0">默认分组</option></select>
                                 <div class="bm-toggle" id="bm-s-grp-op">是</div>
                             </div>
-                            <div class="bm-filter-area" id="bm-conds" style="display:none"></div>
+                        </div>
+                        <div style="flex:1"></div>
+                        <div class="bm-action-bar-inline">
+                            <div class="bm-status-text" id="bm-st"></div>
+                            <button class="bm-btn" id="bm-btn-fetch-fans">粉丝</button>
+                            <button class="bm-btn" id="bm-btn-fetch-dyn">动态</button>
+                            <div class="bm-v-divider"></div>
+                            <button class="bm-btn" id="bm-btn-unf" disabled>取关</button>
+                            <button class="bm-btn" id="bm-btn-fol" disabled>关注</button>
+                            <div class="bm-close" id="bm-cls">✕</div>
                         </div>
                     </div>
+                    <div class="bm-sub-bar">
+                        <select id="bm-s-tg" class="bm-select"><option value="">目标分组</option></select>
+                        <button class="bm-btn" id="bm-btn-g-add" disabled>添加</button>
+                        <button class="bm-btn" id="bm-btn-g-cpy" disabled>复制</button>
+                        <button class="bm-btn" id="bm-btn-g-mov" disabled>移动</button>
+                        <div class="bm-v-divider"></div>
+                        <button class="bm-btn" id="bm-btn-imp">导入</button>
+                        <button class="bm-btn" id="bm-btn-exp">导出</button>
+                        <div class="bm-v-divider"></div>
+                        <button class="bm-btn" id="bm-btn-clear-cache">清空缓存</button>
+                        <span class="bm-lbl">操作间隔</span>
+                        <input type="number" id="bm-set-delay" class="bm-input" min="100" step="100" style="width:70px">
+                        <div style="flex:1"></div>
+                        <input id="bm-k" class="bm-input" placeholder="搜索..." style="width:240px;">
+                    </div>
+                    <div class="bm-cond-bar" id="bm-conds" style="display:none;"></div>
                     <div class="bm-body">
                         <table class="bm-table">
                             <thead><tr><th width="40"><input type="checkbox" id="bm-all"></th><th data-s="u">用户 ↕</th><th width="100" data-s="f">粉丝数 ↕</th><th width="100" data-s="d">最新动态 ↕</th><th width="100" data-s="v">最新投稿 ↕</th><th width="100" data-s="t">关注时间 ↕</th><th width="60" data-s="vip">会员 ↕</th><th width="60" data-s="ver">认证 ↕</th></tr></thead>
                             <tbody id="bm-list"></tbody>
                         </table>
                     </div>
-                </div>`;
+                </div>
+            </div>`;
             document.body.appendChild(this.ui);
             this.bind();
         }
@@ -261,7 +293,6 @@
         bind() {
             Q('#bm-cls', this.ui).onclick = () => this.hide();
             Q('#bm-all', this.ui).onchange = e => this.toggleAll(e.target.checked);
-            Q('#bm-btn-ft', this.ui).onclick = () => { const s = Q('#bm-frow').style; s.display = s.display === 'flex' ? 'none' : 'flex'; };
             let tm;
             Q('#bm-k', this.ui).oninput = () => { clearTimeout(tm); tm = setTimeout(() => this.render(), 300); };
             const tog = (id, f, a, b) => { Q(id).onclick = e => { const v = e.target.textContent===a; e.target.textContent = v?b:a; this.state.filter[f] = v?'>':'<='; if(f==='fans') this.state.filter[f]=v?'<':'>='; }; };
@@ -288,6 +319,15 @@
             Q('#bm-btn-fetch-dyn').onclick = () => this.act('fetch-dyn');
             Q('#bm-btn-imp').onclick = () => this.act('imp');
             Q('#bm-btn-exp').onclick = () => this.act('exp');
+            const delayInput = Q('#bm-set-delay', this.ui);
+            delayInput.value = this.settings.fetchDelay;
+            delayInput.onchange = e => {
+                const val = parseInt(e.target.value);
+                if (!isNaN(val) && val >= 100) { this.settings.fetchDelay = val; this.saveSettings(); }
+            };
+            Q('#bm-btn-clear-cache').onclick = async () => {
+                await this.clearCache();
+            };
             this.ui.querySelectorAll('th[data-s]').forEach(th => th.onclick = () => this.sort(th.dataset.s));
             Q('#bm-list').onclick = e => {
                 const tr = e.target.closest('tr'); if (!tr || e.target.tagName === 'A') return;
@@ -339,7 +379,7 @@
                     });
                     st.innerHTML = `同步中... <span class="bm-status-num">${fresh.length}</span> / ${res.data.total}`;
                     if (list.length < 50) break;
-                    pn++; if (pn % 5 === 0) await new Promise(r => setTimeout(r, 200));
+                    pn++; if (pn % 5 === 0) await new Promise(r => setTimeout(r, this.settings.delay));
                 }
                 this.state.list = fresh;
                 this.render();
@@ -384,7 +424,13 @@
         }
 
         renderConds() {
-            const c = Q('#bm-conds'); c.innerHTML = ''; c.style.display = this.state.conds.length ? 'flex' : 'none';
+            const c = Q('#bm-conds'); 
+            c.innerHTML = '';
+            if (this.state.conds.length === 0) {
+                c.style.display = 'none';
+                return;
+            }
+            c.style.display = 'flex';
             this.state.conds.forEach((o, i) => {
                 const t = CE('div', 'bm-filter-tag'); t.innerHTML = `<span>${o.l}</span><span class="rm">✕</span>`;
                 t.querySelector('.rm').onclick = () => { this.state.conds.splice(i, 1); this.renderConds(); this.render(); };
@@ -538,6 +584,7 @@
             if (!items.length) items = this.view;
             if (!items.length) return alert('列表为空');
             this.state.busy = true; this.state.stop = false;
+            const delayMs = type === 'fans' ? this.settings.fetchDelay : this.settings.fetchDelay * 3;
             const b = Q(type === 'fans' ? '#bm-btn-fetch-fans' : '#bm-btn-fetch-dyn');
             b.textContent = '停止'; b.classList.add('processing');
             const st = Q('#bm-st');
@@ -573,7 +620,7 @@
                     await this.updateDBItem(u);
                 } catch (e) { console.error(`Failed to fetch info for ${u.uid}`, e); }
                 updateProgress();
-            });
+            });    
             const queue = [...tasks];
             const executing = new Set();
             const run = async () => {
@@ -583,6 +630,7 @@
                         const task = queue.shift();
                         const promise = task().finally(() => executing.delete(promise));
                         executing.add(promise);
+                        if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
                     }
                     if (executing.size > 0) await Promise.race(executing);
                 }
@@ -608,7 +656,7 @@
                         this.state.selected.delete(uid);
                         await this.removeDBItem(uid);
                     } catch {}
-                    await new Promise(r => setTimeout(r, 300));
+                    await new Promise(r => setTimeout(r, this.settings.delay));
                 }
             } else {
                 for (let i = 0; i < items.length; i += 50) {
@@ -618,7 +666,7 @@
                     try {
                         await this.req('https://api.bilibili.com/x/relation/batch/modify', 'POST', `fids=${chk.map(u=>u.uid).join(',')}&act=1&re_src=11&csrf=${csrf}`);
                     } catch {}
-                    await new Promise(r => setTimeout(r, 1000));
+                    await new Promise(r => setTimeout(r, this.settings.delay * 3));
                 }
             }
             st.textContent = '完成'; 
@@ -644,7 +692,7 @@
                         await this.updateDBItem(u);
                     }
                 } catch {}
-                await new Promise(r => setTimeout(r, 300));
+                await new Promise(r => setTimeout(r, this.settings.delay));
             }
             st.textContent = '完成'; this.render();
         }
