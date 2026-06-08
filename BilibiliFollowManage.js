@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliBili 关注管理
 // @namespace    https://github.com/YisRime/BilibiliFollowManage
-// @version      8.3
+// @version      9.0
 // @description  B站关注管理，支持批量取关、分组管理、信息同步等功能，适用于批量管理关注列表。
 // @author       苡淞
 // @match        https://space.bilibili.com/*/relation/follow*
@@ -97,7 +97,7 @@
                 filter: { fans: '>=', date: '<=', dateType: 'mtime' },
                 conds: [], selected: new Set()
             };
-            this.settings = { delay: 300, fetchDelay: 1000 };
+            this.settings = { shortDelay: 300, longDelay: 5000, autoDeselect: true };
             this.uid = window.location.pathname.match(/space\/(\d+)/)?.[1] || document.cookie.match(/DedeUserID=(\d+)/)?.[1];
             this.db = null;
             const btn = CE('button', 'bm-btn-entry');
@@ -276,8 +276,12 @@
                         <button class="bm-btn" id="bm-btn-exp">导出</button>
                         <div class="bm-v-divider"></div>
                         <button class="bm-btn" id="bm-btn-clear-cache">清空缓存</button>
-                        <span class="bm-lbl">操作间隔</span>
-                        <input type="number" id="bm-set-delay" class="bm-input" min="100" step="100" style="width:70px">
+                        <span class="bm-lbl">间隔</span>
+                        <input type="number" id="bm-set-short-delay" class="bm-input" step="50" style="width:60px" title="取关/分组/分页/粉丝数">
+                        <input type="number" id="bm-set-long-delay" class="bm-input" step="100" style="width:60px" title="批量关注/动态投稿获取">
+                        <label class="bm-lbl" style="cursor:pointer;display:flex;align-items:center;gap:4px">
+                           <input type="checkbox" id="bm-set-auto-deselect"> 自动取消选中
+                        </label>
                         <div style="flex:1"></div>
                         <input id="bm-k" class="bm-input" placeholder="搜索..." style="width:240px;">
                     </div>
@@ -332,11 +336,23 @@
             Q('#bm-btn-fetch-dyn').onclick = () => this.act('fetch-dyn');
             Q('#bm-btn-imp').onclick = () => this.act('imp');
             Q('#bm-btn-exp').onclick = () => this.act('exp');
-            const delayInput = Q('#bm-set-delay', this.ui);
-            delayInput.value = this.settings.fetchDelay;
-            delayInput.onchange = e => {
+            const shortDelayIn = Q('#bm-set-short-delay', this.ui);
+            shortDelayIn.value = this.settings.shortDelay;
+            shortDelayIn.onchange = e => {
                 const val = parseInt(e.target.value);
-                if (!isNaN(val) && val >= 100) { this.settings.fetchDelay = val; this.saveSettings(); }
+                if (!isNaN(val) && val >= 50) { this.settings.shortDelay = val; this.saveSettings(); }
+            };
+            const longDelayIn = Q('#bm-set-long-delay', this.ui);
+            longDelayIn.value = this.settings.longDelay;
+            longDelayIn.onchange = e => {
+                const val = parseInt(e.target.value);
+                if (!isNaN(val) && val >= 500) { this.settings.longDelay = val; this.saveSettings(); }
+            };
+            const autoDesCheck = Q('#bm-set-auto-deselect', this.ui);
+            autoDesCheck.checked = this.settings.autoDeselect;
+            autoDesCheck.onchange = e => {
+                this.settings.autoDeselect = e.target.checked;
+                this.saveSettings();
             };
             Q('#bm-btn-clear-cache').onclick = async () => {
                 await this.clearCache();
@@ -398,7 +414,7 @@
                     });
                     st.innerHTML = `同步中... <span class="bm-status-num">${fresh.length}</span> / ${res.data.total}`;
                     if (list.length < 50) break;
-                    pn++; if (pn % 5 === 0) await new Promise(r => setTimeout(r, this.settings.delay));
+                    pn++; if (pn % 5 === 0) await new Promise(r => setTimeout(r, this.settings.shortDelay));
                 }
                 this.state.list = fresh;
                 this.render();
@@ -614,7 +630,7 @@
             if (!items.length) items = this.view;
             if (!items.length) return alert('列表为空');
             this.state.busy = true; this.state.stop = false;
-            const delayMs = type === 'fans' ? this.settings.fetchDelay : this.settings.fetchDelay * 3;
+            const delayMs = type === 'fans' ? this.settings.shortDelay : this.settings.longDelay;
             const b = Q(type === 'fans' ? '#bm-btn-fetch-fans' : '#bm-btn-fetch-dyn');
             const originalText = b.textContent;
             b.textContent = '停止'; b.classList.add('processing');
@@ -670,6 +686,8 @@
             b.textContent = originalText;
             b.classList.remove('processing');
             st.textContent = isStopped ? '已停止' : `更新完成 ${completed} 人`;
+            if (this.settings.autoDeselect) this.state.selected.clear();
+            this.render();
         }
 
         async modRel(items, act) {
@@ -685,7 +703,7 @@
                         this.state.selected.delete(uid);
                         await this.removeDBItem(uid);
                     } catch {}
-                    await new Promise(r => setTimeout(r, this.settings.delay));
+                    await new Promise(r => setTimeout(r, this.settings.shortDelay));
                 }
             } else {
                 for (let i = 0; i < items.length; i += 50) {
@@ -695,8 +713,9 @@
                     try {
                         await this.req('https://api.bilibili.com/x/relation/batch/modify', 'POST', `fids=${chk.map(u=>u.uid).join(',')}&act=1&re_src=11&csrf=${csrf}`);
                     } catch {}
-                    await new Promise(r => setTimeout(r, this.settings.delay * 5));
+                    await new Promise(r => setTimeout(r, this.settings.longDelay));
                 }
+                if (this.settings.autoDeselect) this.state.selected.clear();
             }
             st.textContent = '完成'; 
             this.render();
@@ -721,8 +740,9 @@
                         await this.updateDBItem(u);
                     }
                 } catch {}
-                await new Promise(r => setTimeout(r, this.settings.delay));
+                await new Promise(r => setTimeout(r, this.settings.shortDelay));
             }
+            if (this.settings.autoDeselect) this.state.selected.clear();
             st.textContent = '完成'; this.render();
         }
     }
