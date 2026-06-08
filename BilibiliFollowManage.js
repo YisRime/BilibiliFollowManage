@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliBili 关注管理
 // @namespace    https://github.com/YisRime/BilibiliFollowManage
-// @version      8.2
+// @version      8.3
 // @description  B站关注管理，支持批量取关、分组管理、信息同步等功能，适用于批量管理关注列表。
 // @author       苡淞
 // @match        https://space.bilibili.com/*/relation/follow*
@@ -58,7 +58,7 @@
         .bm-filter-tag .rm{cursor:pointer;font-weight:700;opacity:.6;font-size:14px}
         .bm-filter-tag:hover .rm{opacity:1;color:var(--b-red)}
         @keyframes fadeIn{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}
-        .bm-status-text{color:#61666d;font-size:13px;white-space:nowrap;margin-right:8px;}
+        .bm-status-text{color:#61666d;font-size:13px;white-space:nowrap;margin-right:8px;display:flex;align-items:center;}
         .bm-status-num{font-weight:700;color:#18191c;margin:0 4px;font-size:14px}
         .bm-close{font-size:20px;color:#9499a0;cursor:pointer;margin-left:8px;transition:color .2s}
         .bm-close:hover{color:#18191c}
@@ -80,6 +80,10 @@
         .t-vip{color:#d6249f;background:#fdf2f8;border-color:#fbcfe8}.t-org{color:#0066ff;background:#e6f0ff;border-color:#b3d1ff}.t-per{color:#ff6b00;background:#fff4e6;border-color:#ffd8a8}.t-group{color:#10b981;background:#ecfdf5;border-color:#a7f3d0}.t-special{color:#e63946;background:#ffe5e5;border-color:#ffadad}.t-mutual{color:#8b5cf6;background:#f5f3ff;border-color:#c4b5fd}.t-other{color:#b45309;background:#fffbeb;border-color:#fde68a}.t-none{color:#9ca3af;background:#f9fafb;border-color:#e5e7eb}
         .bm-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.75);color:#fff;padding:8px 16px;border-radius:4px;z-index:20000;font-size:13px;pointer-events:none;opacity:0;transition:opacity .3s}
         .bm-toast.show{opacity:1}
+        .bm-arrow{margin-left:2px;color:#9499a0;font-weight:normal}
+        .active .bm-arrow{color:var(--b-blue)}
+        .bm-btn-inv{cursor:pointer;color:var(--b-blue);margin-left:8px;font-size:12px;user-select:none;font-weight:normal}
+        .bm-btn-inv:hover{text-decoration:underline}
     `);
 
     const Q = (sel, p = document) => p.querySelector(sel);
@@ -280,7 +284,16 @@
                     <div class="bm-cond-bar" id="bm-conds" style="display:none;"></div>
                     <div class="bm-body">
                         <table class="bm-table">
-                            <thead><tr><th width="40"><input type="checkbox" id="bm-all"></th><th data-s="u">用户 ↕</th><th width="100" data-s="f">粉丝数 ↕</th><th width="100" data-s="d">最新动态 ↕</th><th width="100" data-s="v">最新投稿 ↕</th><th width="100" data-s="t">关注时间 ↕</th><th width="60" data-s="vip">会员 ↕</th><th width="60" data-s="ver">认证 ↕</th></tr></thead>
+                            <thead><tr>
+                                <th width="65" data-s="sel"><input type="checkbox" id="bm-all"> <span class="bm-arrow">↕</span></th>
+                                <th data-s="u">用户 <span class="bm-arrow">↕</span></th>
+                                <th width="100" data-s="f">粉丝数 <span class="bm-arrow">↕</span></th>
+                                <th width="100" data-s="d">最新动态 <span class="bm-arrow">↕</span></th>
+                                <th width="100" data-s="v">最新投稿 <span class="bm-arrow">↕</span></th>
+                                <th width="100" data-s="t">关注时间 <span class="bm-arrow">↕</span></th>
+                                <th width="60" data-s="vip">会员 <span class="bm-arrow">↕</span></th>
+                                <th width="60" data-s="ver">认证 <span class="bm-arrow">↕</span></th>
+                            </tr></thead>
                             <tbody id="bm-list"></tbody>
                         </table>
                     </div>
@@ -328,13 +341,19 @@
             Q('#bm-btn-clear-cache').onclick = async () => {
                 await this.clearCache();
             };
-            this.ui.querySelectorAll('th[data-s]').forEach(th => th.onclick = () => this.sort(th.dataset.s));
+            this.ui.querySelectorAll('th[data-s]').forEach(th => th.onclick = (e) => {
+                if(e.target.tagName === 'INPUT') return;
+                this.sort(th.dataset.s);
+            });
             Q('#bm-list').onclick = e => {
                 const tr = e.target.closest('tr'); if (!tr || e.target.tagName === 'A') return;
                 const mid = parseInt(tr.dataset.mid), c = tr.querySelector('.bm-chk');
                 if (e.target.type !== 'checkbox') c.checked = !c.checked;
                 c.checked ? this.state.selected.add(mid) : this.state.selected.delete(mid);
                 this.updateUI();
+            };
+            Q('#bm-st').onclick = e => {
+                if (e.target.id === 'bm-btn-inv') this.toggleInvert();
             };
         }
 
@@ -476,6 +495,7 @@
                     else if (sk==='t') { va=a.followTime; vb=b.followTime; }
                     else if (sk==='v') { va=a.videoTime; vb=b.videoTime; }
                     else if (sk==='d') { va=a.dynamicTime; vb=b.dynamicTime; }
+                    else if (sk==='sel') { va = this.state.selected.has(a.uid) ? 1 : 0; vb = this.state.selected.has(b.uid) ? 1 : 0; return (vb - va) * sd; }
                     else if (sk==='ver') { va=a.org?2:(a.desc?1:0); vb=b.org?2:(b.desc?1:0); }
                     else if (sk==='vip') { const s=u=>u.vip==="百年"?100:(u.vip==="十年"?50:(u.vip==="年度"?10:(u.vip==="月度"?5:0))); va=s(a); vb=s(b); }
                     return (va - vb) * sd;
@@ -506,23 +526,33 @@
 
         updateUI() {
             const tot = this.state.list.length, vis = this.view.length, sel = this.state.selected.size;
-            Q('#bm-st').innerHTML = `共 <span class="bm-status-num">${tot}</span> 人${vis!==tot?` | 筛选 <span class="bm-status-num">${vis}</span>`:''}${sel?` | 已选 <span class="bm-status-num" style="color:var(--b-blue)">${sel}</span>`:''}`;
+            const invBtn = `<span id="bm-btn-inv" class="bm-btn-inv">[反选]</span>`;
+            Q('#bm-st').innerHTML = `共 <span class="bm-status-num">${tot}</span> 人${vis!==tot?` | 筛选 <span class="bm-status-num">${vis}</span>`:''}${sel?` | 已选 <span class="bm-status-num" style="color:var(--b-blue)">${sel}</span>${invBtn}`:''}`;
             const all = Q('#bm-all'); all.checked = vis>0 && sel===vis; all.indeterminate = sel>0 && sel<vis;
             ['bm-btn-fol', 'bm-btn-unf', 'bm-btn-g-add', 'bm-btn-g-cpy', 'bm-btn-g-mov'].forEach(id => Q('#'+id).disabled = !sel);
         }
 
         toggleAll(chk) {
             this.view.forEach(u => chk ? this.state.selected.add(u.uid) : this.state.selected.delete(u.uid));
-            this.updateUI();
-            this.view.forEach(u => { const r = Q(`tr[data-mid="${u.uid}"]`); if(r) { r.classList.toggle('sel', chk); r.querySelector('.bm-chk').checked = chk; } });
+            this.render();
+        }
+
+        toggleInvert() {
+            this.view.forEach(u => {
+                if (this.state.selected.has(u.uid)) this.state.selected.delete(u.uid);
+                else this.state.selected.add(u.uid);
+            });
+            this.render();
         }
 
         sort(k) {
             const s = this.state.sort;
             if (s.k !== k) { s.k = k; s.d = 1; } else { s.d = s.d === 1 ? -1 : (s.d === -1 ? 0 : 1); if(!s.d) s.k = null; }
             this.ui.querySelectorAll('th[data-s]').forEach(th => {
-                th.classList.toggle('active', th.dataset.s === s.k && s.d !== 0);
-                th.textContent = th.textContent.split(' ')[0] + (th.dataset.s === s.k && s.d !== 0 ? (s.d===1?' ↑':' ↓') : ' ↕');
+                const isActive = th.dataset.s === s.k && s.d !== 0;
+                th.classList.toggle('active', isActive);
+                const arrow = th.querySelector('.bm-arrow');
+                if (arrow) arrow.textContent = isActive ? (s.d === 1 ? ' ↑' : ' ↓') : ' ↕';
             });
             this.render();
         }
@@ -586,6 +616,7 @@
             this.state.busy = true; this.state.stop = false;
             const delayMs = type === 'fans' ? this.settings.fetchDelay : this.settings.fetchDelay * 3;
             const b = Q(type === 'fans' ? '#bm-btn-fetch-fans' : '#bm-btn-fetch-dyn');
+            const originalText = b.textContent;
             b.textContent = '停止'; b.classList.add('processing');
             const st = Q('#bm-st');
             let completed = 0;
@@ -623,24 +654,22 @@
             });    
             const queue = [...tasks];
             const executing = new Set();
-            const run = async () => {
-                while (queue.length > 0) {
-                    if (this.state.stop) break;
-                    while (executing.size < 5 && queue.length > 0) {
-                        const task = queue.shift();
-                        const promise = task().finally(() => executing.delete(promise));
-                        executing.add(promise);
-                        if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
-                    }
-                    if (executing.size > 0) await Promise.race(executing);
+            while (queue.length > 0 && !this.state.stop) {
+                while (executing.size < 5 && queue.length > 0 && !this.state.stop) {
+                    const task = queue.shift();
+                    const promise = task().finally(() => executing.delete(promise));
+                    executing.add(promise);
+                    if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
                 }
-                await Promise.all(executing);
-            };
-            await run();
+                if (executing.size > 0) await Promise.race(executing);
+            }
+            await Promise.all(executing);
+
+            const isStopped = this.state.stop;
             this.state.busy = false; this.state.stop = false;
-            b.textContent = type === 'fans' ? '粉丝' : '动态';
+            b.textContent = originalText;
             b.classList.remove('processing');
-            st.textContent = completed > 0 ? `更新完成 ${completed} 人` : '已停止';
+            st.textContent = isStopped ? '已停止' : `更新完成 ${completed} 人`;
         }
 
         async modRel(items, act) {
@@ -666,7 +695,7 @@
                     try {
                         await this.req('https://api.bilibili.com/x/relation/batch/modify', 'POST', `fids=${chk.map(u=>u.uid).join(',')}&act=1&re_src=11&csrf=${csrf}`);
                     } catch {}
-                    await new Promise(r => setTimeout(r, this.settings.delay * 3));
+                    await new Promise(r => setTimeout(r, this.settings.delay * 5));
                 }
             }
             st.textContent = '完成'; 
